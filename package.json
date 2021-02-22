@@ -30,7 +30,7 @@
   },
   "scripts": {
     "dev": "nodemon src/server.ts | pino-pretty -l -t 'SYS: HH:MM:ss.l' -i 'pid,hostname'",
-    "start": "tsdx watch",
+    "start": "node lib/server.js",
     "prebuild": "rm -rf lib",
     "build": "tsc",
     "watch": "tsc --watch",
