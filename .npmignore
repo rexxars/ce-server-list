@@ -1,0 +1,5 @@
+/.github
+/coverage
+/test
+.gitignore
+tsconfig.json

@@ -1,0 +1,87 @@
+{
+  "name": "ce-serverlist",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Gamespy master server replacement that only accounts for Codename Eagle",
+  "main": "lib/server.js",
+  "typings": "lib/server.d.ts",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "dependencies": {
+    "@sanity/client": "^2.2.6",
+    "@sentry/node": "^6.2.0",
+    "pino": "^6.11.1"
+  },
+  "devDependencies": {
+    "@types/jest": "^26.0.13",
+    "@types/pino": "^6.3.6",
+    "@typescript-eslint/eslint-plugin": "^4.15.1",
+    "@typescript-eslint/parser": "^4.15.1",
+    "eslint-config-prettier": "^7.2.0",
+    "eslint-config-sanity": "^5.1.0",
+    "nodemon": "^2.0.7",
+    "pino-pretty": "^4.5.0",
+    "prettier": "^2.0.5",
+    "ts-node": "^9.1.1",
+    "tsdx": "^0.14.1",
+    "typescript": "^4.1.5"
+  },
+  "scripts": {
+    "dev": "nodemon src/server.ts | pino-pretty -l -t 'SYS: HH:MM:ss.l' -i 'pid,hostname'",
+    "start": "tsdx watch",
+    "prebuild": "rm -rf lib",
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "test": "npm run lint",
+    "lint": "tsdx lint src",
+    "prepare": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/rexxars/ce-serverlist.git"
+  },
+  "keywords": [
+    "codename",
+    "eagle",
+    "codename-eagle",
+    "gamespy"
+  ],
+  "author": "Espen Hovlandsdal <espen@hovlandsdal.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/rexxars/ce-serverlist/issues"
+  },
+  "homepage": "https://github.com/rexxars/ce-serverlist#readme",
+  "prettier": {
+    "semi": false,
+    "printWidth": 100,
+    "bracketSpacing": false,
+    "singleQuote": true
+  },
+  "eslintConfig": {
+    "root": true,
+    "env": {
+      "node": true,
+      "browser": false
+    },
+    "parser": "@typescript-eslint/parser",
+    "extends": [
+      "sanity",
+      "sanity/typescript",
+      "prettier",
+      "prettier/@typescript-eslint"
+    ],
+    "rules": {
+      "prettier/prettier": "error",
+      "no-unused-expressions": "off",
+      "no-shadow": "off",
+      "no-unused-vars": "off"
+    },
+    "plugins": [
+      "@typescript-eslint",
+      "prettier"
+    ]
+  }
+}
