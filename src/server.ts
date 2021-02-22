@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 /* eslint-disable no-process-exit */
 import net from 'net'
-import {promisify} from 'util'
 
 import {log} from './logger'
 import {config} from './config'
@@ -142,8 +141,10 @@ process.on('SIGTERM', async () => {
 
   clearInterval(storeDataTimer)
 
-  const closeServer = promisify(server.close)
-  await Promise.race([closeServer(), new Promise((resolve) => setTimeout(resolve, 15000))])
+  await Promise.race([
+    new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve()))),
+    new Promise<void>((resolve) => setTimeout(resolve, 15000)),
+  ])
 
   log.warn('Server shut down. Closing.')
   process.exit(143)
