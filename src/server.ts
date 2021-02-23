@@ -17,6 +17,8 @@ const HEARTBEAT_SUFFIX_LENGTH = HEARTBEAT_SUFFIX.length
 
 const checking = new Set<string>()
 const serverList: Server[] = []
+const storeDataTimer = setInterval(persistServerList, 30000)
+let refreshTimer = setTimeout(() => null, 25)
 
 function onClient(socket: net.Socket) {
   const client = [socket.remoteAddress, socket.remotePort].join(':')
@@ -99,8 +101,10 @@ async function pingServer(ip: string, portNumber: number) {
   const client = [ip, portNumber].join(':')
   checking.add(client)
 
+  log.info('[%s] Querying server for status', client)
   try {
     const server = await queryServer(ip, portNumber)
+    log.info('[%s] Server is online, updating status', client)
     upsertServer(serverList, server)
   } catch (err) {
     log.warn('[%s] Failed to query server: %s', client, err.message)
@@ -115,11 +119,10 @@ server.on('listening', () => {
   log.info('Ready to accept connections on port %d', config.port)
 })
 
-loadServerList().then(async (servers) => {
+loadServerList().then((servers) => {
   log.info('Loaded %d servers from stored list', servers.length)
-
-  await Promise.all(servers.map((server) => pingServer(server.ip, server.queryPort)))
-  await persistServerList()
+  servers.forEach((server) => upsertServer(serverList, server))
+  refreshTimer = setTimeout(refreshServers, 15000)
 })
 
 async function persistServerList() {
@@ -134,12 +137,17 @@ async function persistServerList() {
     .catch((err) => log.warn('Failed to persist server list to Sanity: %s', err.message))
 }
 
-const storeDataTimer = setInterval(persistServerList, 30000)
+async function refreshServers() {
+  await Promise.all(serverList.map((server) => pingServer(server.ip, server.queryPort)))
+
+  refreshTimer = setTimeout(refreshServers, 15000)
+}
 
 process.on('SIGTERM', async () => {
   log.warn('Caught SIGTERM, shutting down server...')
 
   clearInterval(storeDataTimer)
+  clearTimeout(refreshTimer)
 
   await Promise.race([
     new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve()))),
