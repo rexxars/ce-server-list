@@ -1,4 +1,6 @@
 import dgram from 'dgram'
+import LruCache from 'lru-cache'
+
 import {sanityClient} from './sanity'
 import {log} from './logger'
 import {
@@ -12,93 +14,130 @@ import {
 } from './typings'
 
 const SLASH = '\\'.charCodeAt(0)
-const MAX_PAYLOAD_SIZE = 65535
+const FIFTEEN_DAYS = 1000 * 60 * 60 * 24 * 15
+const geoIpCache = new LruCache<string, string | false>({max: 500, maxAge: FIFTEEN_DAYS})
 
 export async function queryServer(ip: string, port: number): Promise<Server> {
-  const chunks = await new Promise<Buffer[]>((resolve, reject) => {
-    let numDone = 0
-    const packets: Buffer[] = []
-    const timeout = setTimeout(reject, 5000, new Error(`Timeout reaching ${ip}:${port}}`))
+  const chunker = waitForQueryResponses(3)
 
-    const socket = dgram.createSocket('udp4')
-    socket.on('message', (msg) => {
-      if (msg[0] !== SLASH) {
-        log.warn('Got unknown response type - not slash-prefixed. Skipped.')
-        socket.disconnect()
-        return
-      }
+  const socket = dgram.createSocket('udp4')
+  socket.on('message', (msg) => {
+    if (msg[0] !== SLASH) {
+      log.warn('Got unknown response type - not slash-prefixed. Skipped.')
+      socket.disconnect()
+      return
+    }
 
-      if (msg.length > MAX_PAYLOAD_SIZE) {
-        log.warn('Got message over max payload size (%d KB). Skipped.', msg.length)
-        socket.disconnect()
-        return
-      }
-
-      packets.push(msg)
-
-      if (msg.includes('\\final\\') && ++numDone === 3) {
-        clearTimeout(timeout)
-        resolve(packets)
-      }
-    })
-
-    socket.on('connect', () => {
-      socket.send(Buffer.from('\\info\\'))
-      socket.send(Buffer.from('\\players\\'))
-      socket.send(Buffer.from('\\rules\\'))
-    })
-
-    socket.connect(port, ip)
+    chunker.onMessage(msg)
   })
 
-  const assembled = assembleChunks(chunks)
+  socket.on('connect', () => {
+    socket.send(Buffer.from('\\info\\'))
+    socket.send(Buffer.from('\\players\\'))
+    socket.send(Buffer.from('\\rules\\'))
+  })
+  socket.connect(port, ip)
+
+  const responses = await Promise.race([
+    chunker.responses,
+    new Promise<QueryResponse[]>((_, reject) =>
+      setTimeout(reject, 7500, new Error(`Timeout reaching ${ip}:${port}}`))
+    ),
+  ])
+
+  const assembled = assembleResponses(responses)
   const parsed = fromAggregatedResponse(assembled, ip, port)
-  const geoip = await sanityClient.request({url: `/geoip/country/${ip}`})
-  if (geoip) {
-    parsed.countryCode = geoip.isoCode || undefined
+
+  let countryCode = geoIpCache.get(ip)
+  if (typeof countryCode === 'undefined') {
+    const geoip = await sanityClient.request({url: `/geoip/country/${ip}`})
+    countryCode = (geoip && geoip.isoCode) || undefined
+    geoIpCache.set(ip, countryCode || false)
+  }
+
+  if (countryCode) {
+    parsed.countryCode = countryCode
   }
 
   return parsed
 }
 
-function assembleChunks(chunks: Buffer[]) {
-  const packets = chunks
-    .map((msg) => {
-      const parts = msg.slice(1).toString().split('\\')
-      const result: Record<string, string> = {}
-      for (let i = 0; i < parts.length; i++) {
-        const key = parts[i]
-        const value = parts[++i]
-        result[key] = value
-      }
+export function waitForQueryResponses(
+  numQueries: number
+): {onMessage: (msg: Buffer) => void; responses: Promise<QueryResponse[]>} {
+  let onComplete: (value: QueryResponse[]) => void
 
-      return result as QueryResponse
-    })
-    .filter((packet) => /^\d+\.\d+$/.test(packet.queryid))
-    .sort((a, b) => a.queryid.localeCompare(b.queryid))
+  const responses = new Promise<QueryResponse[]>((resolve) => {
+    onComplete = resolve
+  })
 
+  let numDone = 0
+  const queries: Record<
+    string,
+    {totalPackets: number; numPackets: number; content: Record<string, string>}
+  > = {}
+
+  function onMessage(msg: Buffer) {
+    const {queryid, ...content} = toKeyValue(msg)
+    if (!queryid) {
+      return
+    }
+
+    const [queryId, segment] = queryid.split('.', 2)
+    const segmentNum = parseInt(segment, 10)
+    const query = queries[queryId] || {
+      content: {},
+      numPackets: 0,
+      totalPackets: +Infinity,
+    }
+
+    if (!queries[queryId]) {
+      queries[queryId] = query
+    }
+
+    const isFinal = 'final' in content
+    if (isFinal) {
+      query.totalPackets = segmentNum
+    }
+
+    query.numPackets++
+    query.content = {...query.content, ...content}
+
+    if (
+      Number.isFinite(query.totalPackets) &&
+      query.numPackets === query.totalPackets &&
+      ++numDone === numQueries
+    ) {
+      onComplete(
+        Object.values(queries).map((queryResponse) => queryResponse.content as QueryResponse)
+      )
+    }
+  }
+
+  return {onMessage, responses}
+}
+
+function toKeyValue(msg: Buffer): Record<string, string> {
+  const parts = msg.slice(1).toString().split('\\')
+  const result: Record<string, string> = {}
+  for (let i = 0; i < parts.length; i++) {
+    const key = parts[i]
+    const value = parts[++i]
+    result[key] = value
+  }
+  return result
+}
+
+function assembleResponses(responses: QueryResponse[]) {
   const response: Partial<AggregatedResponse> = {}
 
-  let group: string = ''
-  let groupData: Partial<QueryResponse> = {}
-  for (const packet of packets) {
-    const [groupId] = packet.queryid.split('.', 2)
-    if (groupId === group) {
-      groupData = {...groupData, ...packet}
-    } else {
-      group = groupId
-    }
-
-    if (!('final' in packet)) {
-      continue
-    }
-
-    if (isPlayersResponse(packet)) {
-      response.players = packet
-    } else if (isInfoResponse(packet)) {
-      response.info = packet
-    } else if (isRulesResponse(packet)) {
-      response.rules = packet
+  for (const queryResponse of responses) {
+    if (isPlayersResponse(queryResponse)) {
+      response.players = queryResponse
+    } else if (isInfoResponse(queryResponse)) {
+      response.info = queryResponse
+    } else if (isRulesResponse(queryResponse)) {
+      response.rules = queryResponse
     }
   }
 
