@@ -1,6 +1,6 @@
 import fs from 'fs/promises'
 import path from 'path'
-import crypto from 'crypto'
+import objectHash from 'object-hash'
 
 import {config} from './config'
 import {Server} from './typings'
@@ -8,14 +8,14 @@ import {Server} from './typings'
 const DATA_PATH = path.join(__dirname, '..', 'data')
 const LIST_PATH = path.join(DATA_PATH, 'servers.json')
 
-let lastStoredHash: string = ''
+let lastHash = ''
 
 export async function loadServerList(): Promise<Server[]> {
-  const content = await fs.readFile(LIST_PATH).catch(() => Buffer.from('[]'))
+  const content = await fs.readFile(LIST_PATH, 'utf8').catch(() => '[]')
   let parsed: Server[] = []
   try {
-    parsed = JSON.parse(content.toString('utf8'))
-    lastStoredHash = crypto.createHash('sha1').update(content).digest('hex')
+    parsed = JSON.parse(content)
+    lastHash = objectHash(parsed)
   } catch (err) {
     return []
   }
@@ -24,11 +24,10 @@ export async function loadServerList(): Promise<Server[]> {
 }
 
 export async function storeServerList(servers: Server[]): Promise<boolean> {
-  const newData = JSON.stringify(servers.map(withoutPingTime), null, 2)
-  const newHash = crypto.createHash('sha1').update(Buffer.from(newData)).digest('hex')
-  if (newHash !== lastStoredHash) {
-    await fs.writeFile(LIST_PATH, newData)
-    lastStoredHash = newHash
+  const newData = servers.map(withoutPingTime)
+  const newHash = objectHash(newData)
+  if (newHash !== lastHash) {
+    await fs.writeFile(LIST_PATH, JSON.stringify(newData, null, 2))
     return true
   }
 
@@ -43,8 +42,9 @@ export function upsertServer(servers: Server[], server: Server): Server[] {
   const existing = findServer(servers, server.ip, server.queryPort)
   const exisitingIndex = existing && servers.indexOf(existing)
 
-  if (exisitingIndex) {
-    servers.splice(exisitingIndex, 1, server)
+  if (typeof exisitingIndex !== 'undefined' && exisitingIndex > -1) {
+    servers[exisitingIndex] = server
+    servers.sort((a, b) => a._key.localeCompare(b._key))
   } else {
     servers.push(server)
   }
