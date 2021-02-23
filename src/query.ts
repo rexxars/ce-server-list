@@ -20,6 +20,7 @@ export async function queryServer(ip: string, port: number): Promise<Server> {
   const chunker = waitForQueryResponses(2)
 
   const socket = dgram.createSocket('udp4')
+  const {promise: socketConnect, reject} = getRejectable<QueryResponse[]>()
   socket.on('message', (msg) => {
     if (msg[0] !== SLASH) {
       log.warn('Got unknown response type - not slash-prefixed. Skipped.')
@@ -34,9 +35,11 @@ export async function queryServer(ip: string, port: number): Promise<Server> {
     socket.send(Buffer.from('\\status\\'))
     socket.send(Buffer.from('\\players\\'))
   })
+  socket.on('error', reject)
   socket.connect(port, ip)
 
   const responses = await Promise.race([
+    socketConnect,
     chunker.responses,
     new Promise<QueryResponse[]>((_, reject) =>
       setTimeout(reject, 7500, new Error(`Timeout reaching ${ip}:${port}}`))
@@ -198,4 +201,16 @@ function fromAggregatedResponse(
 
 function toInt(num: string) {
   return parseInt(num, 10)
+}
+
+function getRejectable<T = unknown>() {
+  let reject: (reason?: any) => void = () => {
+    /* intentional noop */
+  }
+
+  const promise = new Promise<T>((_, rejectable) => {
+    reject = rejectable
+  })
+
+  return {promise, reject}
 }
