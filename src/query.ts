@@ -18,7 +18,7 @@ export async function queryServer(ip: string, port: number): Promise<Server> {
   const chunks = await new Promise<Buffer[]>((resolve, reject) => {
     let numDone = 0
     const packets: Buffer[] = []
-    const timeout = setTimeout(reject, 5000, new Error(`Timeout reacting ${ip}:${port}}`))
+    const timeout = setTimeout(reject, 5000, new Error(`Timeout reaching ${ip}:${port}}`))
 
     const socket = dgram.createSocket('udp4')
     socket.on('message', (msg) => {
