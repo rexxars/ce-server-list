@@ -56,7 +56,7 @@ export function removeServer(servers: Server[], ip: string, port: number): Serve
   const existing = findServer(servers, ip, port)
   const exisitingIndex = existing && servers.indexOf(existing)
 
-  if (exisitingIndex) {
+  if (typeof exisitingIndex === 'number') {
     servers.splice(exisitingIndex, 1)
   }
 

@@ -7,6 +7,7 @@ import {config} from './config'
 import {Server, ServerList} from './typings'
 import {queryServer} from './query'
 import {sanityClient} from './sanity'
+import {getHttpServer} from './http'
 import {findServer, loadServerList, removeServer, storeServerList, upsertServer} from './serverlist'
 
 const SLASH = '\\'.charCodeAt(0)
@@ -17,7 +18,9 @@ const HEARTBEAT_SUFFIX_LENGTH = HEARTBEAT_SUFFIX.length
 
 const checking = new Set<string>()
 const serverList: Server[] = []
+const serverFailures: Record<string, number> = {}
 const storeDataTimer = setInterval(persistServerList, 30000)
+const httpData = {lastPingAt: Date.now()}
 let refreshTimer = setTimeout(() => null, 25)
 
 function onClient(socket: net.Socket) {
@@ -106,9 +109,14 @@ async function pingServer(ip: string, portNumber: number) {
     const server = await queryServer(ip, portNumber)
     log.info('[%s] Server is online, updating status', client)
     upsertServer(serverList, server)
+    serverFailures[client] = 0
   } catch (err) {
     log.warn('[%s] Failed to query server: %s', client, err.message)
-    removeServer(serverList, ip, portNumber)
+    serverFailures[client] = (serverFailures[client] || 0) + 1
+
+    if (serverFailures[client] > 5) {
+      removeServer(serverList, ip, portNumber)
+    }
   }
 
   checking.delete(client)
@@ -119,10 +127,15 @@ server.on('listening', () => {
   log.info('Ready to accept connections on port %d', config.port)
 })
 
+const httpServer = getHttpServer(serverList, httpData).listen(config.httpPort, config.host)
+httpServer.on('listening', () => {
+  log.info('Ready to accept HTTP connections on port %d', config.httpPort)
+})
+
 loadServerList().then((servers) => {
   log.info('Loaded %d servers from stored list', servers.length)
   servers.forEach((server) => upsertServer(serverList, server))
-  refreshTimer = setTimeout(refreshServers, 15000)
+  refreshServers()
 })
 
 async function persistServerList() {
@@ -139,6 +152,7 @@ async function persistServerList() {
 
 async function refreshServers() {
   await Promise.all(serverList.map((server) => pingServer(server.ip, server.queryPort)))
+  httpData.lastPingAt = Date.now()
 
   refreshTimer = setTimeout(refreshServers, 15000)
 }
@@ -153,6 +167,10 @@ process.on('SIGTERM', async () => {
     new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve()))),
     new Promise<void>((resolve) => setTimeout(resolve, 15000)),
   ])
+
+  await new Promise<void>((resolve, reject) =>
+    httpServer.close((err) => (err ? reject(err) : resolve()))
+  )
 
   log.warn('Server shut down. Closing.')
   process.exit(143)

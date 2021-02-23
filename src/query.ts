@@ -5,11 +5,10 @@ import {sanityClient} from './sanity'
 import {log} from './logger'
 import {
   AggregatedResponse,
-  InfoResponse,
+  StatusResponse,
   Player,
   PlayersResponse,
   QueryResponse,
-  RulesResponse,
   Server,
 } from './typings'
 
@@ -18,7 +17,7 @@ const FIFTEEN_DAYS = 1000 * 60 * 60 * 24 * 15
 const geoIpCache = new LruCache<string, string | false>({max: 500, maxAge: FIFTEEN_DAYS})
 
 export async function queryServer(ip: string, port: number): Promise<Server> {
-  const chunker = waitForQueryResponses(3)
+  const chunker = waitForQueryResponses(2)
 
   const socket = dgram.createSocket('udp4')
   socket.on('message', (msg) => {
@@ -32,9 +31,8 @@ export async function queryServer(ip: string, port: number): Promise<Server> {
   })
 
   socket.on('connect', () => {
-    socket.send(Buffer.from('\\info\\'))
+    socket.send(Buffer.from('\\status\\'))
     socket.send(Buffer.from('\\players\\'))
-    socket.send(Buffer.from('\\rules\\'))
   })
   socket.connect(port, ip)
 
@@ -134,26 +132,20 @@ function assembleResponses(responses: QueryResponse[]) {
   for (const queryResponse of responses) {
     if (isPlayersResponse(queryResponse)) {
       response.players = queryResponse
-    } else if (isInfoResponse(queryResponse)) {
-      response.info = queryResponse
-    } else if (isRulesResponse(queryResponse)) {
-      response.rules = queryResponse
+    } else if (isStatusResponse(queryResponse)) {
+      response.status = queryResponse
     }
   }
 
   return response as AggregatedResponse
 }
 
-function isInfoResponse(packet: QueryResponse): packet is InfoResponse {
+function isStatusResponse(packet: QueryResponse): packet is StatusResponse {
   return 'hostname' in packet
 }
 
-function isRulesResponse(packet: QueryResponse): packet is RulesResponse {
-  return 'timelimit' in packet
-}
-
 function isPlayersResponse(packet: QueryResponse): packet is PlayersResponse {
-  return 'player_0' in packet || (!isInfoResponse(packet) && !isRulesResponse(packet))
+  return 'player_0' in packet || !isStatusResponse(packet)
 }
 
 function mapPlayers(players: PlayersResponse): Player[] {
@@ -174,27 +166,28 @@ function mapPlayers(players: PlayersResponse): Player[] {
 }
 
 function fromAggregatedResponse(
-  {info, players, rules}: AggregatedResponse,
+  {status, players}: AggregatedResponse,
   ip: string,
   queryPort: number
 ): Server {
   return {
     _type: 'server',
-    _key: [ip, info.hostport].join('_'),
+    _key: [ip, status.hostport].join('_'),
 
     // Game connection details
     ip,
-    serverPort: toInt(info.hostport),
+    serverPort: toInt(status.hostport),
 
     // Server state
-    name: info.hostname,
-    map: info.mapname,
-    maxPlayers: toInt(info.maxplayers) - 1,
-    numPlayers: toInt(info.numplayers),
-    gameType: info.gametype as Server['gameType'],
-    timeLimit: toInt(rules.timelimit),
-    fragLimit: toInt(rules.fraglimit),
-    scoreLimit: toInt(rules.scorelimit),
+    version: status.gamever.replace(/^cneagle/, ''),
+    name: status.hostname,
+    map: status.mapname,
+    maxPlayers: toInt(status.maxplayers) - 1,
+    numPlayers: toInt(status.numplayers),
+    gameType: status.gametype as Server['gameType'],
+    timeLimit: toInt(status.timelimit),
+    fragLimit: toInt(status.fraglimit),
+    scoreLimit: toInt(status.scorelimit),
     players: mapPlayers(players),
 
     // Meta (CE server list only)

@@ -6,6 +6,7 @@ export interface Config {
   logLevel: string
   checkThresholdMs: number
   sanityToken: string
+  httpPort: number
 }
 
 export interface Server {
@@ -17,6 +18,7 @@ export interface Server {
   serverPort: number
 
   // Server state
+  version: string
   name: string
   map: string
   maxPlayers: number
@@ -43,7 +45,10 @@ export interface Player {
   ping: number
   team: 'red' | 'blue'
 }
-export interface InfoResponse {
+export interface StatusResponse {
+  gamename: string
+  gamever: string
+  location: string
   hostname: string
   hostport: string
   mapname: string
@@ -51,10 +56,6 @@ export interface InfoResponse {
   numplayers: string
   maxplayers: string
   gamemode: string
-  queryid: string
-  final?: ''
-}
-export interface RulesResponse {
   timelimit: string
   fraglimit: string
   teamplay: string
@@ -68,12 +69,11 @@ export type PlayersResponse = Record<string, string> & {
   final?: ''
 }
 
-export type QueryResponse = InfoResponse | RulesResponse | PlayersResponse
+export type QueryResponse = StatusResponse | PlayersResponse
 
 export interface AggregatedResponse {
-  info: InfoResponse
+  status: StatusResponse
   players: PlayersResponse
-  rules: RulesResponse
 }
 
 export interface ServerList extends IdentifiedSanityDocumentStub {

@@ -7,4 +7,5 @@ export const config: Config = {
   logLevel: process.env.CE_SERVER_LIST_LOG_LEVEL || 'info',
   checkThresholdMs: parseInt(process.env.CE_SERVER_LIST_CHECK_THRESHOLD || '', 10) || 30000,
   sanityToken: process.env.CE_SERVER_LIST_SANITY_TOKEN || '',
+  httpPort: parseInt(process.env.CE_SERVER_LIST_HTTP_PORT || '', 10) || 8080,
 }
