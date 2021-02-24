@@ -5,7 +5,7 @@ import net from 'net'
 import {log} from './logger'
 import {config} from './config'
 import {Server, ServerList} from './typings'
-import {queryServer} from './query'
+import {closeQueries, queryServer} from './query'
 import {sanityClient} from './sanity'
 import {getHttpServer} from './http'
 import {findServer, loadServerList, removeServer, storeServerList, upsertServer} from './serverlist'
@@ -160,6 +160,7 @@ async function refreshServers() {
 process.on('SIGTERM', async () => {
   log.warn('Caught SIGTERM, shutting down server...')
 
+  closeQueries()
   clearInterval(storeDataTimer)
   clearTimeout(refreshTimer)
 

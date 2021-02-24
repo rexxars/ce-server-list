@@ -1,3 +1,5 @@
+import fs from 'fs'
+import path from 'path'
 import dgram from 'dgram'
 import LruCache from 'lru-cache'
 
@@ -15,6 +17,7 @@ import {
 const SLASH = '\\'.charCodeAt(0)
 const FIFTEEN_DAYS = 1000 * 60 * 60 * 24 * 15
 const geoIpCache = new LruCache<string, string | false>({max: 500, maxAge: FIFTEEN_DAYS})
+const udpLog = fs.createWriteStream(path.join(__dirname, '..', 'data', 'udp.log'))
 
 export async function queryServer(ip: string, port: number): Promise<Server> {
   const chunker = waitForQueryResponses(2)
@@ -22,6 +25,10 @@ export async function queryServer(ip: string, port: number): Promise<Server> {
   const socket = dgram.createSocket('udp4')
   const {promise: socketConnect, reject} = getRejectable<QueryResponse[]>()
   socket.on('message', (msg) => {
+    udpLog.write(`[${new Date().toISOString()}] `)
+    udpLog.write(msg)
+    udpLog.write('\n')
+
     if (msg[0] !== SLASH) {
       log.warn('Got unknown response type - not slash-prefixed. Skipped.')
       socket.disconnect()
@@ -116,6 +123,10 @@ export function waitForQueryResponses(
   }
 
   return {onMessage, responses}
+}
+
+export function closeQueries(): void {
+  udpLog.close()
 }
 
 function toKeyValue(msg: Buffer): Record<string, string> {
