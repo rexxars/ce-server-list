@@ -144,10 +144,10 @@ function assembleResponses(responses: QueryResponse[]) {
   const response: Partial<AggregatedResponse> = {}
 
   for (const queryResponse of responses) {
-    if (isPlayersResponse(queryResponse)) {
-      response.players = queryResponse
-    } else if (isStatusResponse(queryResponse)) {
+    if (isStatusResponse(queryResponse)) {
       response.status = queryResponse
+    } else if (isPlayersResponse(queryResponse)) {
+      response.players = queryResponse
     }
   }
 
