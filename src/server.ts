@@ -21,6 +21,7 @@ const serverList: Server[] = []
 const serverFailures: Record<string, number> = {}
 const storeDataTimer = setInterval(persistServerList, 30000)
 const httpData = {lastPingAt: Date.now()}
+const seenServers = new Set<string>(['89.38.98.12'])
 let refreshTimer = setTimeout(() => null, 25)
 
 function onClient(socket: net.Socket) {
@@ -81,6 +82,8 @@ function onClient(socket: net.Socket) {
 }
 
 async function onHeartbeat(ip: string, portNumber: number) {
+  seenServers.add(ip)
+
   const now = Date.now()
   const client = [ip, portNumber].join(':')
   const threshold = now - config.checkThresholdMs
@@ -134,7 +137,10 @@ httpServer.on('listening', () => {
 
 loadServerList().then((servers) => {
   log.info('Loaded %d servers from stored list', servers.length)
-  servers.forEach((server) => upsertServer(serverList, server))
+  servers.forEach((server) => {
+    seenServers.add(server.ip)
+    upsertServer(serverList, server)
+  })
   refreshServers()
 })
 
@@ -151,7 +157,8 @@ async function persistServerList() {
 }
 
 async function refreshServers() {
-  await Promise.all(serverList.map((server) => pingServer(server.ip, server.queryPort)))
+  const ips = Array.from(seenServers.values())
+  await Promise.all(ips.map((ip) => pingServer(ip, 4711)))
   httpData.lastPingAt = Date.now()
 
   refreshTimer = setTimeout(refreshServers, 15000)
