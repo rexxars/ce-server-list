@@ -15,14 +15,16 @@ import {
 const SLASH = '\\'.charCodeAt(0)
 const FIFTEEN_DAYS = 1000 * 60 * 60 * 24 * 15
 const geoIpCache = new LruCache<string, string | false>({max: 500, maxAge: FIFTEEN_DAYS})
+const sockets = new Set<dgram.Socket>()
 
 export async function queryServer(ip: string, port: number): Promise<Server> {
   const chunker = waitForQueryResponses(2)
 
   const socket = dgram.createSocket('udp4')
+  sockets.add(socket)
+
   const {promise: socketConnect, reject} = getRejectable<QueryResponse[]>()
   socket.on('message', (msg) => {
-
     if (msg[0] !== SLASH) {
       log.warn('Got unknown response type - not slash-prefixed. Skipped.')
       socket.disconnect()
@@ -46,6 +48,9 @@ export async function queryServer(ip: string, port: number): Promise<Server> {
       setTimeout(reject, 7500, new Error(`Timeout reaching ${ip}:${port}}`))
     ),
   ])
+
+  socket.close()
+  sockets.delete(socket)
 
   const assembled = assembleResponses(responses)
   const parsed = fromAggregatedResponse(assembled, ip, port)
@@ -120,6 +125,7 @@ export function waitForQueryResponses(
 }
 
 export function closeQueries(): void {
+  sockets.forEach((socket) => socket.close())
 }
 
 function toKeyValue(msg: Buffer): Record<string, string> {
