@@ -195,7 +195,7 @@ function fromAggregatedResponse(
     version: status.gamever.replace(/^cneagle/, ''),
     name: status.hostname,
     map: status.mapname,
-    maxPlayers: toInt(status.maxplayers) - 1,
+    maxPlayers: toInt(status.maxplayers),
     numPlayers: toInt(status.numplayers),
     gameType: status.gametype as Server['gameType'],
     timeLimit: toInt(status.timelimit),
