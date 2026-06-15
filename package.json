@@ -1,95 +1,51 @@
 {
   "name": "ce-serverlist",
-  "private": true,
   "version": "1.0.0",
+  "private": true,
   "description": "Gamespy master server replacement that only accounts for Codename Eagle",
-  "main": "lib/server.js",
-  "typings": "lib/server.d.ts",
-  "sideEffects": false,
-  "engines": {
-    "node": ">=14.0.0"
+  "keywords": [
+    "codename",
+    "codename-eagle",
+    "eagle",
+    "gamespy"
+  ],
+  "homepage": "https://github.com/rexxars/ce-serverlist#readme",
+  "bugs": {
+    "url": "https://github.com/rexxars/ce-serverlist/issues"
   },
-  "dependencies": {
-    "@sanity/client": "^2.2.6",
-    "@sentry/node": "^6.2.0",
-    "express": "^4.17.1",
-    "lru-cache": "^6.0.0",
-    "object-hash": "^2.1.1",
-    "pino": "^6.11.1",
-    "svg-country-flags": "^1.2.10"
-  },
-  "devDependencies": {
-    "@types/express": "^4.17.11",
-    "@types/jest": "^26.0.13",
-    "@types/lru-cache": "^5.1.0",
-    "@types/object-hash": "^1.3.4",
-    "@types/pino": "^6.3.6",
-    "@typescript-eslint/eslint-plugin": "^4.15.1",
-    "@typescript-eslint/parser": "^4.15.1",
-    "eslint-config-prettier": "^7.2.0",
-    "eslint-config-sanity": "^5.1.0",
-    "nodemon": "^2.0.7",
-    "pino-pretty": "^4.5.0",
-    "prettier": "^2.0.5",
-    "ts-node": "^9.1.1",
-    "tsdx": "^0.14.1",
-    "typescript": "^4.1.5"
-  },
-  "scripts": {
-    "dev": "nodemon src/server.ts | pino-pretty -l -t 'SYS: HH:MM:ss.l' -i 'pid,hostname'",
-    "start": "node lib/server.js",
-    "prebuild": "rm -rf lib",
-    "build": "tsc",
-    "watch": "tsc --watch",
-    "test": "tsdx test",
-    "posttest": "npm run lint",
-    "lint": "tsdx lint src",
-    "prepare": "npm run build"
-  },
+  "license": "MIT",
+  "author": "Espen Hovlandsdal <espen@hovlandsdal.com>",
   "repository": {
     "type": "git",
     "url": "git+ssh://git@github.com/rexxars/ce-serverlist.git"
   },
-  "keywords": [
-    "codename",
-    "eagle",
-    "codename-eagle",
-    "gamespy"
-  ],
-  "author": "Espen Hovlandsdal <espen@hovlandsdal.com>",
-  "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/rexxars/ce-serverlist/issues"
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.ts | pino-pretty -l -t 'SYS: HH:MM:ss.l' -i 'pid,hostname'",
+    "start": "node src/server.ts",
+    "typecheck": "tsc",
+    "test": "vitest run",
+    "lint": "oxlint",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check"
   },
-  "homepage": "https://github.com/rexxars/ce-serverlist#readme",
-  "prettier": {
-    "semi": false,
-    "printWidth": 100,
-    "bracketSpacing": false,
-    "singleQuote": true
+  "dependencies": {
+    "@sanity/client": "^7.22.1",
+    "express": "^5.2.1",
+    "lru-cache": "^11.5.1",
+    "pino": "^10.3.1",
+    "svg-country-flags": "^1.2.10"
   },
-  "eslintConfig": {
-    "root": true,
-    "env": {
-      "node": true,
-      "browser": false
-    },
-    "parser": "@typescript-eslint/parser",
-    "extends": [
-      "sanity",
-      "sanity/typescript",
-      "prettier",
-      "prettier/@typescript-eslint"
-    ],
-    "rules": {
-      "prettier/prettier": "error",
-      "no-unused-expressions": "off",
-      "no-shadow": "off",
-      "no-unused-vars": "off"
-    },
-    "plugins": [
-      "@typescript-eslint",
-      "prettier"
-    ]
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.9.3",
+    "oxfmt": "^0.55.0",
+    "oxlint": "^1.70.0",
+    "pino-pretty": "^13.1.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  },
+  "engines": {
+    "node": ">=26.0.0"
   }
 }

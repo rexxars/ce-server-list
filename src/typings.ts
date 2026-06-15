@@ -1,4 +1,4 @@
-import {IdentifiedSanityDocumentStub} from '@sanity/client'
+import type {IdentifiedSanityDocumentStub} from '@sanity/client'
 
 export interface Config {
   port: number
@@ -76,7 +76,7 @@ export interface AggregatedResponse {
   players: PlayersResponse
 }
 
-export interface ServerList extends IdentifiedSanityDocumentStub {
+export type ServerList = IdentifiedSanityDocumentStub & {
   _id: 'serverList'
   _type: 'serverList'
   servers: Server[]

@@ -1,20 +1,20 @@
-import dgram from 'dgram'
-import LruCache from 'lru-cache'
+import dgram from 'node:dgram'
+import {LRUCache} from 'lru-cache'
 
-import {sanityClient} from './sanity'
-import {log} from './logger'
-import {
+import {sanityClient} from './sanity.ts'
+import {log} from './logger.ts'
+import type {
   AggregatedResponse,
   StatusResponse,
   Player,
   PlayersResponse,
   QueryResponse,
   Server,
-} from './typings'
+} from './typings.ts'
 
 const SLASH = '\\'.charCodeAt(0)
 const FIFTEEN_DAYS = 1000 * 60 * 60 * 24 * 15
-const geoIpCache = new LruCache<string, string | false>({max: 500, maxAge: FIFTEEN_DAYS})
+const geoIpCache = new LRUCache<string, string | false>({max: 500, ttl: FIFTEEN_DAYS})
 const sockets = new Set<dgram.Socket>()
 
 export async function queryServer(ip: string, port: number): Promise<Server> {
@@ -45,7 +45,7 @@ export async function queryServer(ip: string, port: number): Promise<Server> {
     socketConnect,
     chunker.responses,
     new Promise<QueryResponse[]>((_, reject) =>
-      setTimeout(reject, 7500, new Error(`Timeout reaching ${ip}:${port}}`))
+      setTimeout(reject, 7500, new Error(`Timeout reaching ${ip}:${port}}`)),
     ),
   ])
 
@@ -69,9 +69,10 @@ export async function queryServer(ip: string, port: number): Promise<Server> {
   return parsed
 }
 
-export function waitForQueryResponses(
-  numQueries: number
-): {onMessage: (msg: Buffer) => void; responses: Promise<QueryResponse[]>} {
+export function waitForQueryResponses(numQueries: number): {
+  onMessage: (msg: Buffer) => void
+  responses: Promise<QueryResponse[]>
+} {
   let onComplete: (value: QueryResponse[]) => void
 
   const responses = new Promise<QueryResponse[]>((resolve) => {
@@ -116,7 +117,7 @@ export function waitForQueryResponses(
       ++numDone === numQueries
     ) {
       onComplete(
-        Object.values(queries).map((queryResponse) => queryResponse.content as QueryResponse)
+        Object.values(queries).map((queryResponse) => queryResponse.content as QueryResponse),
       )
     }
   }
@@ -164,7 +165,7 @@ function isPlayersResponse(packet: QueryResponse): packet is PlayersResponse {
 function mapPlayers(players: PlayersResponse): Player[] {
   const playerKeys = Object.keys(players)
     .filter((key) => /^player_\d+$/.test(key))
-    .sort()
+    .toSorted()
   const playerNums = playerKeys.map((key) => toInt(key.slice(7)))
   return playerNums.map((num) => ({
     _type: 'player',
@@ -181,7 +182,7 @@ function mapPlayers(players: PlayersResponse): Player[] {
 function fromAggregatedResponse(
   {status, players}: AggregatedResponse,
   ip: string,
-  queryPort: number
+  queryPort: number,
 ): Server {
   return {
     _type: 'server',
@@ -214,7 +215,7 @@ function toInt(num: string) {
 }
 
 function getRejectable<T = unknown>() {
-  let reject: (reason?: any) => void = () => {
+  let reject: (reason?: unknown) => void = () => {
     /* intentional noop */
   }
 

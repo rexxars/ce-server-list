@@ -1,14 +1,19 @@
 #!/usr/bin/env node
-/* eslint-disable no-process-exit */
-import net from 'net'
+import net from 'node:net'
 
-import {log} from './logger'
-import {config} from './config'
-import {Server, ServerList} from './typings'
-import {closeQueries, queryServer} from './query'
-import {sanityClient} from './sanity'
-import {getHttpServer} from './http'
-import {findServer, loadServerList, removeServer, storeServerList, upsertServer} from './serverlist'
+import {log} from './logger.ts'
+import {config} from './config.ts'
+import type {Server, ServerList} from './typings.ts'
+import {closeQueries, queryServer} from './query.ts'
+import {sanityClient} from './sanity.ts'
+import {getHttpServer} from './http.ts'
+import {
+  findServer,
+  loadServerList,
+  removeServer,
+  storeServerList,
+  upsertServer,
+} from './serverlist.ts'
 
 const SLASH = '\\'.charCodeAt(0)
 const HEARTBEAT_PREFIX = Buffer.from('\\heartbeat\\')
@@ -21,7 +26,11 @@ const serverList: Server[] = []
 const serverFailures: Record<string, number> = {}
 const storeDataTimer = setInterval(persistServerList, 30000)
 const httpData = {lastPingAt: Date.now()}
-const seenServers = new Set<string>(['89.38.98.12'])
+const seenServers = new Set<string>([
+  // https://codenameeaglemultiplayer.com/ known server
+  '89.38.98.12',
+])
+
 let refreshTimer = setTimeout(() => null, 25)
 
 function onClient(socket: net.Socket) {
@@ -30,6 +39,12 @@ function onClient(socket: net.Socket) {
   socket.on('data', async (data) => {
     if (!socket.remoteAddress) {
       log.info('[%s] Could not determine remote address, destroying', client)
+      socket.destroy()
+      return
+    }
+
+    if (!Buffer.isBuffer(data)) {
+      log.info('[%s] Received non-binary data, destroying', client)
       socket.destroy()
       return
     }
@@ -59,7 +74,7 @@ function onClient(socket: net.Socket) {
       data
         .slice(HEARTBEAT_PREFIX_LENGTH, HEARTBEAT_PREFIX_LENGTH + 5)
         .toString('utf8')
-        .replace(/[^\d]/g, '')
+        .replace(/[^\d]/g, ''),
     )
 
     if (!portNumber || portNumber > 65535) {
@@ -76,7 +91,7 @@ function onClient(socket: net.Socket) {
   })
 
   socket.on('error', (err) => {
-    log.info('[%s] Client connection error: %s', err.message)
+    log.info('[%s] Client connection error: %s', client, err.message)
     socket.destroy()
   })
 }
@@ -90,12 +105,12 @@ async function onHeartbeat(ip: string, portNumber: number) {
 
   const server = findServer(serverList, ip, portNumber)
   if (server && server.lastPinged > threshold) {
-    log.debug('[%s] Pinged this server %d ms ago, skipping.', now - server.lastPinged)
+    log.debug('[%s] Pinged this server %d ms ago, skipping.', client, now - server.lastPinged)
     return
   }
 
   if (checking.has(client)) {
-    log.debug('[%s] Server ping in progress, skipping.')
+    log.debug('[%s] Server ping in progress, skipping.', client)
     return
   }
 
@@ -114,7 +129,8 @@ async function pingServer(ip: string, portNumber: number) {
     upsertServer(serverList, server)
     serverFailures[client] = 0
   } catch (err) {
-    log.warn('[%s] Failed to query server: %s', client, err.message)
+    const message = err instanceof Error ? err.message : String(err)
+    log.warn('[%s] Failed to query server: %s', client, message)
     serverFailures[client] = (serverFailures[client] || 0) + 1
 
     if (serverFailures[client] > 5) {
@@ -150,9 +166,16 @@ async function persistServerList() {
     return
   }
 
-  const listDocument: ServerList = {_id: 'serverList', _type: 'serverList', servers: serverList}
+  const listDocument: ServerList = {
+    _id: 'serverList',
+    _type: 'serverList',
+    servers: serverList,
+  }
   await sanityClient
-    .createOrReplace(listDocument, {returnDocuments: false, visibility: 'async'})
+    .createOrReplace(listDocument, {
+      returnDocuments: false,
+      visibility: 'async',
+    })
     .catch((err) => log.warn('Failed to persist server list to Sanity: %s', err.message))
 }
 
@@ -177,7 +200,7 @@ process.on('SIGTERM', async () => {
   ])
 
   await new Promise<void>((resolve, reject) =>
-    httpServer.close((err) => (err ? reject(err) : resolve()))
+    httpServer.close((err) => (err ? reject(err) : resolve())),
   )
 
   log.warn('Server shut down. Closing.')

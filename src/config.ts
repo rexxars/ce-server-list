@@ -1,5 +1,4 @@
-/* eslint-disable no-process-env */
-import {Config} from './typings'
+import type {Config} from './typings.ts'
 
 export const config: Config = {
   port: parseInt(process.env.CE_SERVER_LIST_PORT || '', 10) || 27900,

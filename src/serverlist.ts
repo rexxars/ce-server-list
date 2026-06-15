@@ -1,22 +1,21 @@
-import fs from 'fs/promises'
-import path from 'path'
-import objectHash from 'object-hash'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 
-import {config} from './config'
-import {Server} from './typings'
+import {config} from './config.ts'
+import type {Server} from './typings.ts'
 
-const DATA_PATH = path.join(__dirname, '..', 'data')
+const DATA_PATH = path.join(import.meta.dirname, '..', 'data')
 const LIST_PATH = path.join(DATA_PATH, 'servers.json')
 
-let lastHash = ''
+let lastSerialized = ''
 
 export async function loadServerList(): Promise<Server[]> {
   const content = await fs.readFile(LIST_PATH, 'utf8').catch(() => '[]')
   let parsed: Server[] = []
   try {
     parsed = JSON.parse(content)
-    lastHash = objectHash(parsed)
-  } catch (err) {
+    lastSerialized = serialize(parsed)
+  } catch {
     return []
   }
 
@@ -24,10 +23,11 @@ export async function loadServerList(): Promise<Server[]> {
 }
 
 export async function storeServerList(servers: Server[]): Promise<boolean> {
-  const newData = servers.map(withoutPingTime)
-  const newHash = objectHash(newData)
-  if (newHash !== lastHash) {
-    await fs.writeFile(LIST_PATH, JSON.stringify(newData, null, 2))
+  const serialized = serialize(servers.map(withoutPingTime))
+  if (serialized !== lastSerialized) {
+    await fs.mkdir(DATA_PATH, {recursive: true})
+    await fs.writeFile(LIST_PATH, serialized)
+    lastSerialized = serialized
     return true
   }
 
@@ -61,6 +61,10 @@ export function removeServer(servers: Server[], ip: string, port: number): Serve
   }
 
   return servers
+}
+
+function serialize(servers: unknown): string {
+  return JSON.stringify(servers, null, 2)
 }
 
 function withoutPingTime(server: Server): Omit<Server, 'lastPinged'> {
