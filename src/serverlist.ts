@@ -34,6 +34,31 @@ export async function storeServerList(servers: Server[]): Promise<boolean> {
   return false
 }
 
+/**
+ * Merges several server lists into one, keyed by `_key`. Earlier sources take
+ * precedence on collision, so callers should pass the most trustworthy source
+ * (eg local disk) before fallbacks (eg the remote backup).
+ */
+export function mergeSeededServers(sources: Server[][]): Server[] {
+  const merged = new Map<string, Server>()
+  for (const source of sources) {
+    for (const server of source) {
+      if (!merged.has(server._key)) {
+        merged.set(server._key, server)
+      }
+    }
+  }
+  return [...merged.values()]
+}
+
+/**
+ * Stamps a server read from a backup (which carries no local ping time) so it
+ * is immediately eligible to be re-pinged on the next refresh.
+ */
+export function withSeedPingTime(server: Omit<Server, 'lastPinged'>): Server {
+  return applyLastPinged(server)
+}
+
 export function findServer(servers: Server[], ip: string, port: number): Server | undefined {
   return servers.find((server) => server.ip === ip && server.queryPort === port)
 }
