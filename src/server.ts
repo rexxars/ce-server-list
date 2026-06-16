@@ -3,16 +3,20 @@ import net from 'node:net'
 
 import {log} from './logger.ts'
 import {config} from './config.ts'
-import type {Server, ServerList} from './typings.ts'
+import type {Server} from './typings.ts'
 import {closeQueries, queryServer} from './query.ts'
-import {sanityClient} from './sanity.ts'
+import {commitChangeset, fetchServerList} from './sanity.ts'
 import {getHttpServer} from './http.ts'
+import {createSeenServers} from './seenServers.ts'
+import {createSanitySync, type SanitySync} from './sanitySync.ts'
 import {
   findServer,
   loadServerList,
+  mergeSeededServers,
   removeServer,
   storeServerList,
   upsertServer,
+  withSeedPingTime,
 } from './serverlist.ts'
 
 const SLASH = '\\'.charCodeAt(0)
@@ -26,12 +30,13 @@ const serverList: Server[] = []
 const serverFailures: Record<string, number> = {}
 const storeDataTimer = setInterval(persistServerList, 30000)
 const httpData = {lastPingAt: Date.now()}
-const seenServers = new Set<string>([
+const seenServers = createSeenServers([
   // https://codenameeaglemultiplayer.com/ known server
-  '89.38.98.12',
+  {ip: '89.38.98.12', queryPort: 4711},
 ])
 
 let refreshTimer = setTimeout(() => null, 25)
+let sync: SanitySync | null = null
 
 function onClient(socket: net.Socket) {
   const client = [socket.remoteAddress, socket.remotePort].join(':')
@@ -97,7 +102,7 @@ function onClient(socket: net.Socket) {
 }
 
 async function onHeartbeat(ip: string, portNumber: number) {
-  seenServers.add(ip)
+  seenServers.add(ip, portNumber)
 
   const now = Date.now()
   const client = [ip, portNumber].join(':')
@@ -127,21 +132,25 @@ async function pingServer(ip: string, portNumber: number) {
     const server = await queryServer(ip, portNumber)
     log.info('[%s] Server is online, updating status', client)
     upsertServer(serverList, server)
+    sync?.markDirty(server)
     serverFailures[client] = 0
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    log.warn('[%s] Failed to query server: %s', client, message)
+    log.warn('[%s] Failed to query server: %s', client, errorMessage(err))
     serverFailures[client] = (serverFailures[client] || 0) + 1
 
     if (serverFailures[client] > 5) {
+      const existing = findServer(serverList, ip, portNumber)
       removeServer(serverList, ip, portNumber)
+      if (existing) {
+        sync?.markRemoved(existing._key)
+      }
     }
   }
 
   checking.delete(client)
 }
 
-const server = net.createServer(onClient).listen(config.port, config.host)
+const server = net.createServer(onClient)
 server.on('listening', () => {
   log.info('Ready to accept connections on port %d', config.port)
 })
@@ -151,37 +160,55 @@ httpServer.on('listening', () => {
   log.info('Ready to accept HTTP connections on port %d', config.httpPort)
 })
 
-loadServerList().then((servers) => {
-  log.info('Loaded %d servers from stored list', servers.length)
-  servers.forEach((server) => {
-    seenServers.add(server.ip)
-    upsertServer(serverList, server)
+start()
+
+async function start() {
+  const [diskServers, remoteList] = await Promise.all([
+    loadServerList().catch((err) => {
+      log.warn('Failed to load stored server list: %s', errorMessage(err))
+      return [] as Server[]
+    }),
+    fetchServerList().catch((err) => {
+      log.warn('Failed to fetch server list from Sanity: %s', errorMessage(err))
+      return null
+    }),
+  ])
+
+  // Seed from the local cache first, falling back to the durable Sanity backup
+  // so a wiped disk does not lose the set of known servers.
+  const remoteServers = (remoteList?.servers ?? []).map(withSeedPingTime)
+  const seeded = mergeSeededServers([diskServers, remoteServers])
+  for (const seededServer of seeded) {
+    seenServers.add(seededServer.ip, seededServer.queryPort)
+    upsertServer(serverList, seededServer)
+  }
+
+  // Only servers already present in the backup are "known"; everything else is
+  // inserted on first sync. Created here (after the fetch) so the very first
+  // change is routed correctly.
+  sync = createSanitySync({
+    commit: commitChangeset,
+    knownKeys: remoteServers.map((seededServer) => seededServer._key),
+    onError: (err) => log.warn('Failed to sync server list to Sanity: %s', errorMessage(err)),
   })
+
+  log.info(
+    'Seeded %d servers (%d from disk, %d from backup)',
+    seeded.length,
+    diskServers.length,
+    remoteServers.length,
+  )
+
+  server.listen(config.port, config.host)
   refreshServers()
-})
+}
 
 async function persistServerList() {
-  const updated = await storeServerList(serverList)
-  if (!updated) {
-    return
-  }
-
-  const listDocument: ServerList = {
-    _id: 'serverList',
-    _type: 'serverList',
-    servers: serverList,
-  }
-  await sanityClient
-    .createOrReplace(listDocument, {
-      returnDocuments: false,
-      visibility: 'async',
-    })
-    .catch((err) => log.warn('Failed to persist server list to Sanity: %s', err.message))
+  await storeServerList(serverList)
 }
 
 async function refreshServers() {
-  const ips = Array.from(seenServers.values())
-  await Promise.all(ips.map((ip) => pingServer(ip, 4711)))
+  await Promise.all(seenServers.entries().map(({ip, queryPort}) => pingServer(ip, queryPort)))
   httpData.lastPingAt = Date.now()
 
   refreshTimer = setTimeout(refreshServers, 15000)
@@ -203,10 +230,20 @@ process.on('SIGTERM', async () => {
     httpServer.close((err) => (err ? reject(err) : resolve())),
   )
 
+  if (sync) {
+    await sync
+      .flush()
+      .catch((err) => log.warn('Failed to flush server list to Sanity: %s', errorMessage(err)))
+  }
+
   log.warn('Server shut down. Closing.')
   process.exit(143)
 })
 
 function toInt(num: string) {
   return parseInt(num, 10) || false
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
 }
