@@ -8,15 +8,7 @@ import {closeQueries, queryServer} from './query.ts'
 import {commitChangeset, fetchServerList} from './sanity.ts'
 import {createSeenServers} from './seenServers.ts'
 import {createSanitySync, type SanitySync} from './sanitySync.ts'
-import {
-  findServer,
-  loadServerList,
-  mergeSeededServers,
-  removeServer,
-  storeServerList,
-  upsertServer,
-  withSeedPingTime,
-} from './serverlist.ts'
+import {findServer, removeServer, upsertServer, withSeedPingTime} from './serverlist.ts'
 
 const SLASH = '\\'.charCodeAt(0)
 const HEARTBEAT_PREFIX = Buffer.from('\\heartbeat\\')
@@ -27,7 +19,6 @@ const HEARTBEAT_SUFFIX_LENGTH = HEARTBEAT_SUFFIX.length
 const checking = new Set<string>()
 const serverList: Server[] = []
 const serverFailures: Record<string, number> = {}
-const storeDataTimer = setInterval(persistServerList, 30000)
 const seenServers = createSeenServers([
   // https://codenameeaglemultiplayer.com/ known server
   {ip: '89.38.98.12', queryPort: 4711},
@@ -159,22 +150,15 @@ server.on('listening', () => {
 start()
 
 async function start() {
-  const [diskServers, remoteList] = await Promise.all([
-    loadServerList().catch((err) => {
-      log.warn('Failed to load stored server list: %s', errorMessage(err))
-      return [] as Server[]
-    }),
-    fetchServerList().catch((err) => {
-      log.warn('Failed to fetch server list from Sanity: %s', errorMessage(err))
-      return null
-    }),
-  ])
+  const remoteList = await fetchServerList().catch((err) => {
+    log.warn('Failed to fetch server list from Sanity: %s', errorMessage(err))
+    return null
+  })
 
-  // Seed from the local cache first, falling back to the durable Sanity backup
-  // so a wiped disk does not lose the set of known servers.
+  // Seed from the durable Sanity backup so a restart does not lose the set of
+  // known servers.
   const remoteServers = (remoteList?.servers ?? []).map(withSeedPingTime)
-  const seeded = mergeSeededServers([diskServers, remoteServers])
-  for (const seededServer of seeded) {
+  for (const seededServer of remoteServers) {
     seenServers.add(seededServer.ip, seededServer.queryPort)
     upsertServer(serverList, seededServer)
   }
@@ -188,19 +172,10 @@ async function start() {
     onError: (err) => log.warn('Failed to sync server list to Sanity: %s', errorMessage(err)),
   })
 
-  log.info(
-    'Seeded %d servers (%d from disk, %d from backup)',
-    seeded.length,
-    diskServers.length,
-    remoteServers.length,
-  )
+  log.info('Seeded %d servers from backup', remoteServers.length)
 
   server.listen(config.port, config.host)
   refreshServers()
-}
-
-async function persistServerList() {
-  await storeServerList(serverList)
 }
 
 async function refreshServers() {
@@ -213,7 +188,6 @@ process.on('SIGTERM', async () => {
   log.warn('Caught SIGTERM, shutting down server...')
 
   closeQueries()
-  clearInterval(storeDataTimer)
   clearTimeout(refreshTimer)
 
   await Promise.race([

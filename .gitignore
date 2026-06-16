@@ -42,6 +42,3 @@ jspm_packages
 
 # Compiled output
 /lib
-
-# Temporary data
-/data
