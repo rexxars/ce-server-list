@@ -13,6 +13,12 @@ export const config: Config = {
   httpPort: parseInt(process.env.CE_SERVER_LIST_HTTP_PORT || '', 10) || 8080,
 }
 
+if (!config.sanityToken) {
+  throw new Error(
+    'No Sanity token found. Please set the CE_SERVER_LIST_SANITY_TOKEN environment variable.',
+  )
+}
+
 function tryReadSanityConfigToken() {
   const configPath = join(homedir(), '.config', 'sanity', 'config.json')
   return readFile(configPath, 'utf-8')
