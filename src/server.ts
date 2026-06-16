@@ -8,13 +8,8 @@ import {closeQueries, queryServer} from './query.ts'
 import {commitChangeset, fetchServerList} from './sanity.ts'
 import {createSeenServers} from './seenServers.ts'
 import {createSanitySync, type SanitySync} from './sanitySync.ts'
+import {createHeartbeatHandler} from './heartbeat.ts'
 import {findServer, removeServer, upsertServer, withSeedPingTime} from './serverlist.ts'
-
-const SLASH = '\\'.charCodeAt(0)
-const HEARTBEAT_PREFIX = Buffer.from('\\heartbeat\\')
-const HEARTBEAT_PREFIX_LENGTH = HEARTBEAT_PREFIX.length
-const HEARTBEAT_SUFFIX = Buffer.from('\\gamename\\cneagle')
-const HEARTBEAT_SUFFIX_LENGTH = HEARTBEAT_SUFFIX.length
 
 const checking = new Set<string>()
 const serverList: Server[] = []
@@ -26,69 +21,6 @@ const seenServers = createSeenServers([
 
 let refreshTimer = setTimeout(() => null, 25)
 let sync: SanitySync | null = null
-
-function onClient(socket: net.Socket) {
-  const client = [socket.remoteAddress, socket.remotePort].join(':')
-
-  socket.on('data', async (data) => {
-    if (!socket.remoteAddress) {
-      log.info('[%s] Could not determine remote address, destroying', client)
-      socket.destroy()
-      return
-    }
-
-    if (!Buffer.isBuffer(data)) {
-      log.info('[%s] Received non-binary data, destroying', client)
-      socket.destroy()
-      return
-    }
-
-    if (data[0] !== SLASH) {
-      log.info('[%s] Invalid data received from client, destroying', client)
-      socket.destroy()
-      return
-    }
-
-    if (data.length < 32) {
-      log.info('[%s] Packet is too small, destroying', client)
-      socket.destroy()
-      return
-    }
-
-    if (
-      !data.slice(0, HEARTBEAT_PREFIX_LENGTH).equals(HEARTBEAT_PREFIX) ||
-      !data.slice(0 - HEARTBEAT_SUFFIX_LENGTH).equals(HEARTBEAT_SUFFIX)
-    ) {
-      log.info('[%s] Packet is not a heartbeat, destroying', client)
-      socket.destroy()
-      return
-    }
-
-    const portNumber = toInt(
-      data
-        .slice(HEARTBEAT_PREFIX_LENGTH, HEARTBEAT_PREFIX_LENGTH + 5)
-        .toString('utf8')
-        .replace(/[^\d]/g, ''),
-    )
-
-    if (!portNumber || portNumber > 65535) {
-      log.info('[%s] Packet did not contain valid port number, destroying', client)
-      socket.destroy()
-      return
-    }
-
-    await onHeartbeat(socket.remoteAddress, portNumber)
-  })
-
-  socket.on('end', () => {
-    log.info('[%s] Client closed connection', client)
-  })
-
-  socket.on('error', (err) => {
-    log.info('[%s] Client connection error: %s', client, err.message)
-    socket.destroy()
-  })
-}
 
 async function onHeartbeat(ip: string, portNumber: number) {
   seenServers.add(ip, portNumber)
@@ -142,7 +74,7 @@ async function pingServer(ip: string, portNumber: number) {
 // Fail fast in production if the service is misconfigured.
 requireSanityToken()
 
-const server = net.createServer(onClient)
+const server = net.createServer(createHeartbeatHandler({onHeartbeat}))
 server.on('listening', () => {
   log.info('Ready to accept connections on port %d', config.port)
 })
@@ -243,10 +175,6 @@ process.on('SIGTERM', async () => {
   log.warn('Server shut down. Closing.')
   process.exit(143)
 })
-
-function toInt(num: string) {
-  return parseInt(num, 10) || false
-}
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
