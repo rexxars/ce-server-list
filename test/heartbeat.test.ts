@@ -2,7 +2,8 @@ import net from 'node:net'
 
 import {describe, expect, test} from 'vitest'
 
-import {createHeartbeatHandler, parseHeartbeat} from '../src/heartbeat.ts'
+import {createHeartbeatHandler, parseHeartbeat, type ValidateOptions} from '../src/heartbeat.ts'
+import {computeValidate} from '../src/gsValidate.ts'
 
 function heartbeat(port: string): Buffer {
   return Buffer.from(`\\heartbeat\\${port}\\gamename\\cneagle`)
@@ -72,7 +73,9 @@ interface Harness {
   close: () => Promise<void>
 }
 
-async function startServer(options: {maxBytes?: number; timeoutMs?: number} = {}): Promise<Harness> {
+async function startServer(
+  options: {maxBytes?: number; timeoutMs?: number; validate?: ValidateOptions} = {},
+): Promise<Harness> {
   const heartbeats: Array<{ip: string; port: number}> = []
   const server = net.createServer(
     createHeartbeatHandler({
@@ -158,6 +161,61 @@ describe('createHeartbeatHandler', () => {
     try {
       // Valid prefix, but a flood of digits and never a terminator.
       await sendChunks(harness.port, [Buffer.from(`\\heartbeat\\${'1'.repeat(100)}`)])
+      expect(harness.heartbeats).toEqual([])
+    } finally {
+      await harness.close()
+    }
+  })
+})
+
+/**
+ * Drives the server side of the `\secure\` handshake: sends the heartbeat, reads
+ * the `\basic\\secure\<challenge>` reply, and answers with whatever `respond`
+ * produces for the received challenge.
+ */
+async function handshake(
+  port: number,
+  frame: Buffer,
+  respond: (challenge: string) => string,
+): Promise<void> {
+  const client = net.connect(port, '127.0.0.1')
+  client.on('error', () => {}) // a destroy() from the server surfaces as ECONNRESET
+
+  await new Promise<void>((resolve, reject) => {
+    client.once('connect', resolve)
+    client.once('error', reject)
+  })
+
+  client.write(frame)
+
+  client.once('data', (data: Buffer) => {
+    const token = '\\secure\\'
+    const text = data.toString('utf8')
+    const at = text.indexOf(token)
+    const challenge = at === -1 ? '' : text.slice(at + token.length)
+    client.write(`\\validate\\${respond(challenge)}\\final\\`)
+  })
+
+  await new Promise<void>((resolve) => client.once('close', resolve))
+}
+
+describe('createHeartbeatHandler with validation', () => {
+  const validate: ValidateOptions = {createChallenge: () => 'ABCDEF'}
+
+  test('invokes onHeartbeat once a server returns a valid \\validate\\ response', async () => {
+    const harness = await startServer({validate})
+    try {
+      await handshake(harness.port, heartbeat('4711'), (challenge) => computeValidate(challenge))
+      expect(harness.heartbeats).toEqual([{ip: '127.0.0.1', port: 4711}])
+    } finally {
+      await harness.close()
+    }
+  })
+
+  test('ignores a server that returns a bad \\validate\\ response', async () => {
+    const harness = await startServer({validate})
+    try {
+      await handshake(harness.port, heartbeat('4711'), () => 'wrongwrong')
       expect(harness.heartbeats).toEqual([])
     } finally {
       await harness.close()

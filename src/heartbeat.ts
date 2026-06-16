@@ -1,6 +1,12 @@
 import type net from 'node:net'
 
 import {log} from './logger.ts'
+import {
+  CE_SECRET_KEY,
+  isValidResponse,
+  parseValidateResponse,
+  randomChallenge,
+} from './gsValidate.ts'
 
 const HEARTBEAT_PREFIX = Buffer.from('\\heartbeat\\')
 const HEARTBEAT_PREFIX_LENGTH = HEARTBEAT_PREFIX.length
@@ -60,6 +66,13 @@ export function parseHeartbeat(buffer: Buffer): HeartbeatParse {
   return {type: 'heartbeat', port}
 }
 
+export interface ValidateOptions {
+  /** Secret key used to verify the response. Defaults to CE's baked-in key. */
+  secretKey?: string
+  /** Challenge generator; injectable so tests can pin a deterministic value. */
+  createChallenge?: () => string
+}
+
 export interface HeartbeatHandlerOptions {
   /** Invoked once per connection with the source IP and parsed query port. */
   onHeartbeat: (ip: string, port: number) => void | Promise<void>
@@ -67,12 +80,23 @@ export interface HeartbeatHandlerOptions {
   maxBytes?: number
   /** How long a connection may idle without completing a frame. */
   timeoutMs?: number
+  /**
+   * When set, the master issues a GameSpy `\secure\` challenge after the
+   * heartbeat and only invokes `onHeartbeat` once the server returns a matching
+   * `\validate\` response — proving it is a genuine CE server rather than a
+   * spoofer. Off by default; verify against a live capture before enabling.
+   */
+  validate?: ValidateOptions
 }
 
 /**
  * Builds a `net.Server` connection handler that buffers a single heartbeat
  * frame, invokes `onHeartbeat`, and closes the connection. Returned as a factory
  * so the framing/lifecycle logic stays decoupled from the master server's state.
+ *
+ * When `validate` is supplied, the connection runs the GameSpy `\secure\`
+ * handshake before `onHeartbeat`: it replies with a challenge and waits for a
+ * matching `\validate\` response, dropping servers that fail to prove themselves.
  */
 export function createHeartbeatHandler(
   options: HeartbeatHandlerOptions,
@@ -81,7 +105,11 @@ export function createHeartbeatHandler(
     onHeartbeat,
     maxBytes = DEFAULT_MAX_HEARTBEAT_BYTES,
     timeoutMs = DEFAULT_SOCKET_TIMEOUT_MS,
+    validate,
   } = options
+
+  const secretKey = validate?.secretKey ?? CE_SECRET_KEY
+  const createChallenge = validate?.createChallenge ?? randomChallenge
 
   return function onClient(socket: net.Socket): void {
     const ip = socket.remoteAddress
@@ -93,16 +121,30 @@ export function createHeartbeatHandler(
       return
     }
 
-    // TCP is a byte stream, not a message stream: a heartbeat may arrive split
+    // TCP is a byte stream, not a message stream: a frame may arrive split
     // across chunks or coalesced with trailing bytes. Accumulate until the frame
     // terminator is present rather than assuming one chunk is one message.
     let buffer = Buffer.alloc(0)
     let handled = false
+    // Either we are still reading the heartbeat, or (with validation enabled) we
+    // have answered with a challenge and are awaiting the `\validate\` response.
+    let phase: 'heartbeat' | 'validate' = 'heartbeat'
+    let port = 0
+    let challenge = ''
 
     socket.setTimeout(timeoutMs, () => {
       log.info('[%s] Connection idle, destroying', client)
       socket.destroy()
     })
+
+    function tooLarge(): boolean {
+      if (buffer.length > maxBytes) {
+        log.info('[%s] No %s frame within %d bytes, destroying', client, phase, maxBytes)
+        socket.destroy()
+        return true
+      }
+      return false
+    }
 
     socket.on('data', async (chunk: Buffer) => {
       if (handled) {
@@ -110,6 +152,27 @@ export function createHeartbeatHandler(
       }
 
       buffer = Buffer.concat([buffer, chunk])
+
+      if (phase === 'validate') {
+        const validateResult = parseValidateResponse(buffer)
+        if (validateResult.type === 'incomplete') {
+          tooLarge()
+          return
+        }
+
+        handled = true
+        socket.end()
+
+        if (!isValidResponse(challenge, validateResult.response, secretKey)) {
+          log.info('[%s] Server failed `\\secure\\` validation, ignoring', client)
+          return
+        }
+
+        log.info('[%s] Server validated', client)
+        await onHeartbeat(ip, port)
+        return
+      }
+
       const result = parseHeartbeat(buffer)
 
       if (result.type === 'invalid') {
@@ -119,26 +182,36 @@ export function createHeartbeatHandler(
       }
 
       if (result.type === 'incomplete') {
-        if (buffer.length > maxBytes) {
-          log.info('[%s] No heartbeat frame within %d bytes, destroying', client, maxBytes)
-          socket.destroy()
-        }
+        tooLarge()
         return
       }
 
-      handled = true
-
-      // We only need the IP and the query port the heartbeat carries — the
-      // `\secure\` challenge is intentionally skipped — so close the connection
-      // once parsed instead of leaving a half-open socket lingering.
-      socket.end()
-
       if (result.type === 'malformed') {
+        handled = true
+        socket.end()
         log.info('[%s] Packet did not contain valid port number, ignoring', client)
         return
       }
 
-      await onHeartbeat(ip, result.port)
+      port = result.port
+
+      // Without validation we only need the IP and query port the heartbeat
+      // carries, so close the connection once parsed instead of leaving a
+      // half-open socket lingering.
+      if (!validate) {
+        handled = true
+        socket.end()
+        await onHeartbeat(ip, port)
+        return
+      }
+
+      // Issue the `\secure\` challenge and switch to reading the response. The
+      // client only sends `\validate\` after this, so any heartbeat trailing
+      // bytes are spent — reset the buffer for the next frame.
+      challenge = createChallenge()
+      buffer = Buffer.alloc(0)
+      phase = 'validate'
+      socket.write(`\\basic\\\\secure\\${challenge}`)
     })
 
     socket.on('end', () => {
