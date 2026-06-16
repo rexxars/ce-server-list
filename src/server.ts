@@ -2,7 +2,7 @@
 import net from 'node:net'
 
 import {log} from './logger.ts'
-import {config} from './config.ts'
+import {config, requireSanityToken} from './config.ts'
 import type {Server} from './typings.ts'
 import {closeQueries, queryServer} from './query.ts'
 import {commitChangeset, fetchServerList} from './sanity.ts'
@@ -149,6 +149,9 @@ async function pingServer(ip: string, portNumber: number) {
 
   checking.delete(client)
 }
+
+// Fail fast in production if the service is misconfigured.
+requireSanityToken()
 
 const server = net.createServer(onClient)
 server.on('listening', () => {

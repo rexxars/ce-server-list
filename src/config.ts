@@ -13,10 +13,19 @@ export const config: Config = {
   httpPort: parseInt(process.env.CE_SERVER_LIST_HTTP_PORT || '', 10) || 8080,
 }
 
-if (!config.sanityToken) {
-  throw new Error(
-    'No Sanity token found. Please set the CE_SERVER_LIST_SANITY_TOKEN environment variable.',
-  )
+/**
+ * Asserts that a Sanity token is configured, returning it. Called from the
+ * production entry point so the process fails fast when misconfigured, while
+ * leaving the config module itself importable (eg in tests) without a token.
+ */
+export function requireSanityToken(token: string = config.sanityToken): string {
+  if (!token) {
+    throw new Error(
+      'No Sanity token found. Please set the CE_SERVER_LIST_SANITY_TOKEN environment variable.',
+    )
+  }
+
+  return token
 }
 
 function tryReadSanityConfigToken() {
