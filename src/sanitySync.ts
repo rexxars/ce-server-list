@@ -1,0 +1,133 @@
+import type {Server} from './typings.ts'
+
+export interface SyncChangeset {
+  /** Existing servers to overwrite, keyed by `_key`. */
+  updates: Server[]
+  /** New servers to append to the array. */
+  inserts: Server[]
+  /** `_key`s of servers to remove. */
+  removals: string[]
+}
+
+export interface SanitySyncOptions {
+  /** Persists a changeset. Rejects to signal failure (triggers retry). */
+  commit: (changeset: SyncChangeset) => Promise<void>
+  /** `_key`s already known to exist remotely (seeds insert-vs-update decisions). */
+  knownKeys?: Iterable<string>
+  /** How long to coalesce changes before committing. */
+  debounceMs?: number
+  /** Initial delay before retrying a failed commit. */
+  baseBackoffMs?: number
+  /** Upper bound the backoff delay grows towards. */
+  maxBackoffMs?: number
+  /** Called when a commit ultimately fails (after re-queueing for retry). */
+  onError?: (err: unknown) => void
+}
+
+export interface SanitySync {
+  markDirty(server: Server): void
+  markRemoved(key: string): void
+  /** Commit any pending changes immediately and resolve once settled (for shutdown). */
+  flush(): Promise<void>
+}
+
+export function createSanitySync(options: SanitySyncOptions): SanitySync {
+  const {commit, debounceMs = 1500, baseBackoffMs = 1000, maxBackoffMs = 30000, onError} = options
+  const knownKeys = new Set<string>(options.knownKeys)
+
+  const dirty = new Map<string, Server>()
+  const removed = new Set<string>()
+  let flushTimer: ReturnType<typeof setTimeout> | null = null
+  let inFlight: Promise<void> | null = null
+  let nextBackoffMs = baseBackoffMs
+
+  function schedule(delayMs: number) {
+    if (flushTimer) {
+      clearTimeout(flushTimer)
+    }
+    flushTimer = setTimeout(() => void flush(), delayMs)
+  }
+
+  function hasPending() {
+    return dirty.size > 0 || removed.size > 0
+  }
+
+  // Merge failed work back in without clobbering newer changes that arrived
+  // while the commit was in flight.
+  function requeue({updates, inserts, removals}: SyncChangeset) {
+    for (const server of [...updates, ...inserts]) {
+      if (!dirty.has(server._key) && !removed.has(server._key)) {
+        dirty.set(server._key, server)
+      }
+    }
+    for (const key of removals) {
+      if (!dirty.has(key)) {
+        removed.add(key)
+      }
+    }
+  }
+
+  function flush(): Promise<void> {
+    flushTimer = null
+    if (inFlight || !hasPending()) {
+      return inFlight ?? Promise.resolve()
+    }
+
+    const inserts: Server[] = []
+    const updates: Server[] = []
+    for (const [key, server] of dirty) {
+      ;(knownKeys.has(key) ? updates : inserts).push(server)
+    }
+    const changeset: SyncChangeset = {updates, inserts, removals: [...removed]}
+    dirty.clear()
+    removed.clear()
+
+    inFlight = (async () => {
+      try {
+        await commit(changeset)
+        inserts.forEach((server) => knownKeys.add(server._key))
+        changeset.removals.forEach((key) => knownKeys.delete(key))
+        nextBackoffMs = baseBackoffMs
+        inFlight = null
+        if (hasPending()) {
+          schedule(debounceMs)
+        }
+      } catch (err) {
+        inFlight = null
+        requeue(changeset)
+        onError?.(err)
+        const delayMs = nextBackoffMs
+        nextBackoffMs = Math.min(nextBackoffMs * 2, maxBackoffMs)
+        schedule(delayMs)
+      }
+    })()
+
+    return inFlight
+  }
+
+  function markDirty(server: Server) {
+    removed.delete(server._key)
+    dirty.set(server._key, server)
+    nextBackoffMs = baseBackoffMs
+    schedule(debounceMs)
+  }
+
+  function markRemoved(key: string) {
+    dirty.delete(key)
+    removed.add(key)
+    nextBackoffMs = baseBackoffMs
+    schedule(debounceMs)
+  }
+
+  async function flushNow(): Promise<void> {
+    if (flushTimer) {
+      clearTimeout(flushTimer)
+      flushTimer = null
+    }
+    // Wait for any in-flight commit to settle before forcing the final one.
+    await inFlight
+    await flush()
+  }
+
+  return {markDirty, markRemoved, flush: flushNow}
+}
