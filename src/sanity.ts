@@ -2,7 +2,7 @@ import {createClient} from '@sanity/client'
 import {config} from './config.ts'
 
 export const sanityClient = createClient({
-  projectId: 'cenation',
+  projectId: 'cneagle',
   dataset: 'servers',
   useCdn: false,
   token: config.sanityToken,
