@@ -31,13 +31,10 @@
   },
   "dependencies": {
     "@sanity/client": "^7.22.1",
-    "express": "^5.2.1",
     "lru-cache": "^11.5.1",
-    "pino": "^10.3.1",
-    "svg-country-flags": "^1.2.10"
+    "pino": "^10.3.1"
   },
   "devDependencies": {
-    "@types/express": "^5.0.6",
     "@types/node": "^25.9.3",
     "oxfmt": "^0.55.0",
     "oxlint": "^1.70.0",

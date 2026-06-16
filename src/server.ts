@@ -6,7 +6,6 @@ import {config, requireSanityToken} from './config.ts'
 import type {Server} from './typings.ts'
 import {closeQueries, queryServer} from './query.ts'
 import {commitChangeset, fetchServerList} from './sanity.ts'
-import {getHttpServer} from './http.ts'
 import {createSeenServers} from './seenServers.ts'
 import {createSanitySync, type SanitySync} from './sanitySync.ts'
 import {
@@ -29,7 +28,6 @@ const checking = new Set<string>()
 const serverList: Server[] = []
 const serverFailures: Record<string, number> = {}
 const storeDataTimer = setInterval(persistServerList, 30000)
-const httpData = {lastPingAt: Date.now()}
 const seenServers = createSeenServers([
   // https://codenameeaglemultiplayer.com/ known server
   {ip: '89.38.98.12', queryPort: 4711},
@@ -158,11 +156,6 @@ server.on('listening', () => {
   log.info('Ready to accept connections on port %d', config.port)
 })
 
-const httpServer = getHttpServer(serverList, httpData).listen(config.httpPort, config.host)
-httpServer.on('listening', () => {
-  log.info('Ready to accept HTTP connections on port %d', config.httpPort)
-})
-
 start()
 
 async function start() {
@@ -212,7 +205,6 @@ async function persistServerList() {
 
 async function refreshServers() {
   await Promise.all(seenServers.entries().map(({ip, queryPort}) => pingServer(ip, queryPort)))
-  httpData.lastPingAt = Date.now()
 
   refreshTimer = setTimeout(refreshServers, 15000)
 }
@@ -228,10 +220,6 @@ process.on('SIGTERM', async () => {
     new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve()))),
     new Promise<void>((resolve) => setTimeout(resolve, 15000)),
   ])
-
-  await new Promise<void>((resolve, reject) =>
-    httpServer.close((err) => (err ? reject(err) : resolve())),
-  )
 
   if (sync) {
     await sync

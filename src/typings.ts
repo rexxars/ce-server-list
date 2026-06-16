@@ -6,7 +6,6 @@ export interface Config {
   logLevel: string
   checkThresholdMs: number
   sanityToken: string
-  httpPort: number
 }
 
 export interface Server {
