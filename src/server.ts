@@ -3,7 +3,7 @@ import net from 'node:net'
 
 import {log} from './logger.ts'
 import {config, requireSanityToken} from './config.ts'
-import type {Server} from './typings.ts'
+import type {Server, ServerList} from './typings.ts'
 import {closeQueries, queryServer} from './query.ts'
 import {commitChangeset, fetchServerList} from './sanity.ts'
 import {createSeenServers} from './seenServers.ts'
@@ -149,33 +149,72 @@ server.on('listening', () => {
 
 start()
 
-async function start() {
-  const remoteList = await fetchServerList().catch((err) => {
-    log.warn('Failed to fetch server list from Sanity: %s', errorMessage(err))
-    return null
-  })
+function start() {
+  // Start serving immediately so a Sanity outage does not take the master
+  // server offline; the backup seed is fetched (with retries) in the background.
+  server.listen(config.port, config.host)
+  refreshServers()
+  seedFromBackup()
+}
 
+async function seedFromBackup() {
   // Seed from the durable Sanity backup so a restart does not lose the set of
-  // known servers.
+  // known servers. Retried until it succeeds — syncing is deferred until then
+  // so we never misclassify already-known servers as inserts.
+  const remoteList = await fetchServerListWithRetry()
+
   const remoteServers = (remoteList?.servers ?? []).map(withSeedPingTime)
+  const remoteKeys = new Set(remoteServers.map((seededServer) => seededServer._key))
   for (const seededServer of remoteServers) {
     seenServers.add(seededServer.ip, seededServer.queryPort)
     upsertServer(serverList, seededServer)
   }
 
   // Only servers already present in the backup are "known"; everything else is
-  // inserted on first sync. Created here (after the fetch) so the very first
-  // change is routed correctly.
-  sync = createSanitySync({
+  // inserted on first sync.
+  const activeSync = createSanitySync({
     commit: commitChangeset,
-    knownKeys: remoteServers.map((seededServer) => seededServer._key),
+    knownKeys: remoteKeys,
     onError: (err) => log.warn('Failed to sync server list to Sanity: %s', errorMessage(err)),
   })
+  sync = activeSync
+
+  // Servers discovered before the seed arrived are new to the backup, so flush
+  // them now that syncing has started.
+  for (const discovered of serverList) {
+    if (!remoteKeys.has(discovered._key)) {
+      activeSync.markDirty(discovered)
+    }
+  }
 
   log.info('Seeded %d servers from backup', remoteServers.length)
+}
 
-  server.listen(config.port, config.host)
-  refreshServers()
+async function fetchServerListWithRetry(): Promise<ServerList | null> {
+  const baseBackoffMs = 1000
+  const waitMs = 30000
+  const retries = 3
+
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetchServerList()
+    } catch (err) {
+      // Exponential backoff for the first few retries, then settle into a
+      // patient steady poll — the server already runs, this only backfills.
+      const delayMs = attempt < retries ? baseBackoffMs * 2 ** attempt : waitMs
+      log.warn(
+        'Failed to fetch server list from Sanity (attempt %d): %s. Retrying in %d ms',
+        attempt + 1,
+        errorMessage(err),
+        delayMs,
+      )
+      await delay(delayMs)
+    }
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 async function refreshServers() {
