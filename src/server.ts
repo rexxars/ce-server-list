@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import net from 'node:net'
+import dgram from 'node:dgram'
 
 import {log} from './logger.ts'
 import {config, requireSanityToken} from './config.ts'
@@ -8,7 +8,7 @@ import {closeQueries, queryServer} from './query.ts'
 import {commitChangeset, fetchServerList} from './sanity.ts'
 import {createSeenServers} from './seenServers.ts'
 import {createSanitySync, type SanitySync} from './sanitySync.ts'
-import {createHeartbeatHandler} from './heartbeat.ts'
+import {createHeartbeatListener} from './heartbeat.ts'
 import {findServer, removeServer, upsertServer, withSeedPingTime} from './serverlist.ts'
 
 const checking = new Set<string>()
@@ -74,9 +74,15 @@ async function pingServer(ip: string, portNumber: number) {
 // Fail fast in production if the service is misconfigured.
 requireSanityToken()
 
-const server = net.createServer(createHeartbeatHandler({onHeartbeat}))
+// ce.exe announces heartbeats over UDP/27900
+const server = dgram.createSocket('udp4')
+server.on('message', createHeartbeatListener({onHeartbeat}))
 server.on('listening', () => {
-  log.info('Ready to accept connections on port %d', config.port)
+  const address = server.address()
+  log.info('Listening for heartbeats on %s:%d (UDP)', address.address, address.port)
+})
+server.on('error', (err) => {
+  log.error('Heartbeat socket error: %s', err.message)
 })
 
 start()
@@ -84,7 +90,7 @@ start()
 function start() {
   // Start serving immediately so a Sanity outage does not take the master
   // server offline; the backup seed is fetched (with retries) in the background.
-  server.listen(config.port, config.host)
+  server.bind(config.port, config.host)
   refreshServers()
   seedFromBackup()
 }
@@ -162,7 +168,7 @@ process.on('SIGTERM', async () => {
   clearTimeout(refreshTimer)
 
   await Promise.race([
-    new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve()))),
+    new Promise<void>((resolve) => server.close(() => resolve())),
     new Promise<void>((resolve) => setTimeout(resolve, 15000)),
   ])
 

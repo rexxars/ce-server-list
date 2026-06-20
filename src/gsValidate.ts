@@ -1,17 +1,26 @@
 // GameSpy "secure"/"validate" challenge–response, reverse-engineered from
-// Codename Eagle's ce.exe. When a game server sends a heartbeat, the master
-// replies `\basic\\secure\<challenge>` and the server answers
-// `\validate\<response>\final\`, where the response is derived from the
-// challenge and a per-title secret key. Verifying it proves a heartbeat came
-// from a genuine CE server rather than a spoofer.
+// Codename Eagle's ce.exe. A querier sends `\secure\<challenge>` (alone or
+// appended to a `\status\`/`\basic\` query) to the server's QUERY port (4711),
+// and the server appends `\validate\<response>` to its reply, where the response
+// is `base64(gs_encrypt(challenge, secretKey))`.
 //
-// Extracted statically from ce.exe 1.41:
+// Extracted statically from ce.exe 1.41 and CONFIRMED against a live 1.43 host:
+// `\secure\ABCDEF` → `\validate\XY7mYbEq`, matching computeValidate('ABCDEF').
 //   - gamename:   "cneagle"
 //   - secret key: "HNvEAc"  (bytes 48 4E 76 45 41 63 at .data:0x557b80, written
 //                            during GameSpy init)
 //   - transform:  GameSpy `gs_encrypt` (0x4245d0) — a modified RC4 whose
 //                 keystream folds in each plaintext byte — followed by standard
 //                 base64 (encoder 0x4244e0, alphabet map 0x4245a0).
+//
+// NOTE: reference crypto — NOT used in the master's trust path. `ce.exe` runs
+// `\secure\` on the query port (not the UDP heartbeat socket), and the key is
+// public, so a valid `\validate\` proves only "knows a published constant". The
+// master instead trusts a server by querying its advertised `<ip>:<queryPort>`
+// back (see query.ts): answering `\status\` like a real CE host is a strictly
+// stronger check. Kept as the authoritative `gs_encrypt` description (cited by
+// the cemod RE docs) and the building block should a `\secure\` gate ever be
+// wanted in the query path.
 
 /** The per-title GameSpy secret key baked into ce.exe for Codename Eagle. */
 export const CE_SECRET_KEY = 'HNvEAc'

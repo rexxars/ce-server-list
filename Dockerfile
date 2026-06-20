@@ -16,7 +16,7 @@ RUN npm ci --omit=dev
 # Bundle app source
 COPY . .
 
-# Gamespy master server port (TCP)
-EXPOSE 27900
+# Gamespy master server port (UDP)
+EXPOSE 27900/udp
 
 CMD ["node", "src/server.ts"]
