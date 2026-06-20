@@ -1,6 +1,54 @@
 import {describe, expect, test} from 'vitest'
 
-import {waitForQueryResponses} from '../src/query.ts'
+import {parseServer, waitForQueryResponses} from '../src/query.ts'
+
+// A \status\ reply that bundles the player list (observed on live 1.43 hosts).
+const STATUS_WITH_PLAYERS = {
+  gamename: 'cneagle',
+  gamever: 'cneagle1.43',
+  location: '1',
+  hostname: 'CE Nation',
+  hostport: '24711',
+  mapname: 'No mans land',
+  gametype: 'ctf',
+  gamemode: 'openplaying',
+  numplayers: '1',
+  maxplayers: '8',
+  timelimit: '0',
+  fraglimit: '0',
+  scorelimit: '0',
+  teamplay: '1',
+  player_0: 'Rexxie',
+  frags_0: '0',
+  deaths_0: '0',
+  skill_0: '0',
+  ping_0: '0',
+  team_0: 'red',
+  queryid: '13.1',
+}
+
+// A leaner \status\ reply with no player list (observed on older hosts/fixtures).
+const STATUS_NO_PLAYERS = {
+  hostname: 'CENation',
+  hostport: '24711',
+  mapname: 'No mans land',
+  gametype: 'ctf',
+  numplayers: '1',
+  maxplayers: '8',
+  queryid: '29.1',
+}
+
+const PLAYERS_ONLY = {
+  player_0: 'Rexxie',
+  frags_0: '0',
+  deaths_0: '0',
+  ping_0: '0',
+  skill_0: '0',
+  team_0: 'red',
+  queryid: '30.1',
+}
+
+const EMPTY_PLAYERS = {queryid: '14.1'}
 
 describe('waitForQueryResponses', () => {
   test('single query, single packet', async () => {
@@ -125,5 +173,28 @@ describe('waitForQueryResponses', () => {
         "team_2": "blue",
       }
     `)
+  })
+})
+
+describe('parseServer', () => {
+  test('extracts players bundled into the \\status\\ reply (1.43)', () => {
+    const server = parseServer([STATUS_WITH_PLAYERS, EMPTY_PLAYERS], '1.2.3.4', 4711)
+    expect(server.version).toBe('1.43')
+    expect(server.name).toBe('CE Nation')
+    expect(server.numPlayers).toBe(1)
+    expect(server.players).toHaveLength(1)
+    expect(server.players[0]).toMatchObject({nickname: 'Rexxie', team: 'red'})
+  })
+
+  test('extracts players from the dedicated \\players\\ reply (older)', () => {
+    const server = parseServer([STATUS_NO_PLAYERS, PLAYERS_ONLY], '1.2.3.4', 4711)
+    expect(server.players).toHaveLength(1)
+    expect(server.players[0]).toMatchObject({nickname: 'Rexxie', team: 'red'})
+  })
+
+  test('does not duplicate players present in both replies', () => {
+    const server = parseServer([STATUS_WITH_PLAYERS, PLAYERS_ONLY], '1.2.3.4', 4711)
+    expect(server.players).toHaveLength(1)
+    expect(server.players[0]).toMatchObject({nickname: 'Rexxie', team: 'red'})
   })
 })

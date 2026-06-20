@@ -52,8 +52,7 @@ export async function queryServer(ip: string, port: number): Promise<Server> {
   socket.close()
   sockets.delete(socket)
 
-  const assembled = assembleResponses(responses)
-  const parsed = fromAggregatedResponse(assembled, ip, port)
+  const parsed = parseServer(responses, ip, port)
 
   let countryCode = geoIpCache.get(ip)
   if (typeof countryCode === 'undefined') {
@@ -140,26 +139,35 @@ function toKeyValue(msg: Buffer): Record<string, string> {
   return result
 }
 
-function assembleResponses(responses: QueryResponse[]) {
-  const response: Partial<AggregatedResponse> = {}
+export function parseServer(responses: QueryResponse[], ip: string, port: number): Server {
+  return fromAggregatedResponse(assembleResponses(responses), ip, port)
+}
 
-  for (const queryResponse of responses) {
-    if (isStatusResponse(queryResponse)) {
-      response.status = queryResponse
-    } else if (isPlayersResponse(queryResponse)) {
-      response.players = queryResponse
+// Player rows arrive as `<field>_<index>` keys. Depending on the server version
+// they show up in the dedicated `\players\` reply, bundled into the `\status\`
+// reply (1.43), or both — so we harvest them from every response.
+const PLAYER_KEY = /^(?:player|frags|deaths|skill|ping|team)_\d+$/
+
+function assembleResponses(responses: QueryResponse[]): AggregatedResponse {
+  const status = responses.find(isStatusResponse)
+  if (!status) {
+    throw new Error('No status response (missing `hostname`) in server reply')
+  }
+
+  const players: PlayersResponse = {queryid: ''}
+  for (const response of responses) {
+    for (const [key, value] of Object.entries(response)) {
+      if (PLAYER_KEY.test(key)) {
+        players[key] = value
+      }
     }
   }
 
-  return response as AggregatedResponse
+  return {status, players}
 }
 
 function isStatusResponse(packet: QueryResponse): packet is StatusResponse {
   return 'hostname' in packet
-}
-
-function isPlayersResponse(packet: QueryResponse): packet is PlayersResponse {
-  return 'player_0' in packet || !isStatusResponse(packet)
 }
 
 function mapPlayers(players: PlayersResponse): Player[] {
@@ -193,7 +201,7 @@ function fromAggregatedResponse(
     serverPort: toInt(status.hostport),
 
     // Server state
-    version: status.gamever.replace(/^cneagle/, ''),
+    version: (status.gamever ?? '').replace(/^cneagle/, ''),
     name: status.hostname,
     map: status.mapname,
     maxPlayers: toInt(status.maxplayers),
@@ -211,7 +219,8 @@ function fromAggregatedResponse(
 }
 
 function toInt(num: string) {
-  return parseInt(num, 10)
+  const parsed = parseInt(num, 10)
+  return Number.isNaN(parsed) ? 0 : parsed
 }
 
 function getRejectable<T = unknown>() {
