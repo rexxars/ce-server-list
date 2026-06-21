@@ -28,14 +28,23 @@ function makeServer(key: string, overrides: Partial<Server> = {}): Server {
 
 function deferredCommit() {
   const calls: SyncChangeset[] = []
-  const resolvers: Array<(err?: unknown) => void> = []
+  const settlers: Array<{resolve: () => void; reject: (err: unknown) => void}> = []
   const commit = vi.fn((changeset: SyncChangeset) => {
     calls.push(changeset)
     return new Promise<void>((resolve, reject) => {
-      resolvers.push((err) => (err ? reject(err) : resolve()))
+      settlers.push({resolve, reject})
     })
   })
-  return {calls, commit, resolve: (err?: unknown) => resolvers.shift()?.(err)}
+  return {
+    calls,
+    commit,
+    resolve: (err?: unknown) => {
+      const settler = settlers.shift()
+      if (!settler) return
+      if (err) settler.reject(err)
+      else settler.resolve()
+    },
+  }
 }
 
 describe('sanitySync', () => {
@@ -58,6 +67,53 @@ describe('sanitySync', () => {
     expect(calls[0].removals).toEqual([])
   })
 
+  test('skips committing a server whose stored state is unchanged from the last sync', async () => {
+    const {commit} = deferredCommit()
+    const sync = createSanitySync({
+      commit,
+      debounceMs: 1500,
+      knownServers: [makeServer('1.1.1.1_4710', {numPlayers: 2})],
+    })
+
+    // Re-ping returns identical state (only the local-only `lastPinged` differs).
+    sync.markDirty(makeServer('1.1.1.1_4710', {numPlayers: 2, lastPinged: 999999}))
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(commit).not.toHaveBeenCalled()
+  })
+
+  test('commits once a previously-synced server actually changes', async () => {
+    const {calls, commit} = deferredCommit()
+    const sync = createSanitySync({
+      commit,
+      debounceMs: 1500,
+      knownServers: [makeServer('1.1.1.1_4710', {numPlayers: 2})],
+    })
+
+    sync.markDirty(makeServer('1.1.1.1_4710', {numPlayers: 2})) // no-op
+    sync.markDirty(makeServer('1.1.1.1_4710', {numPlayers: 5})) // real change
+    await vi.advanceTimersByTimeAsync(1500)
+
+    expect(commit).toHaveBeenCalledTimes(1)
+    expect(calls[0].updates.map((u) => u.next._key)).toEqual(['1.1.1.1_4710'])
+    expect(calls[0].updates[0].previous.numPlayers).toBe(2)
+    expect(calls[0].updates[0].next.numPlayers).toBe(5)
+  })
+
+  test('a redundant re-ping cancels an already-pending change back to the synced state', async () => {
+    const {commit} = deferredCommit()
+    const sync = createSanitySync({
+      commit,
+      debounceMs: 1500,
+      knownServers: [makeServer('1.1.1.1_4710', {numPlayers: 2})],
+    })
+
+    sync.markDirty(makeServer('1.1.1.1_4710', {numPlayers: 5})) // queue a change
+    sync.markDirty(makeServer('1.1.1.1_4710', {numPlayers: 2})) // flapped back to synced state
+    await vi.advanceTimersByTimeAsync(1500)
+
+    expect(commit).not.toHaveBeenCalled()
+  })
+
   test('coalesces repeated changes to the same key into one commit with the latest data', async () => {
     const {calls, commit} = deferredCommit()
     const sync = createSanitySync({commit, debounceMs: 1500})
@@ -78,14 +134,28 @@ describe('sanitySync', () => {
 
   test('routes known keys to updates and unknown keys to inserts', async () => {
     const {calls, commit} = deferredCommit()
-    const sync = createSanitySync({commit, debounceMs: 1500, knownKeys: ['1.1.1.1_4710']})
+    const sync = createSanitySync({
+      commit,
+      debounceMs: 1500,
+      knownServers: [makeServer('1.1.1.1_4710', {numPlayers: 0})],
+    })
 
-    sync.markDirty(makeServer('1.1.1.1_4710'))
+    sync.markDirty(makeServer('1.1.1.1_4710', {numPlayers: 3}))
     sync.markDirty(makeServer('2.2.2.2_4710'))
     await vi.advanceTimersByTimeAsync(1500)
 
-    expect(calls[0].updates.map((s) => s._key)).toEqual(['1.1.1.1_4710'])
+    expect(calls[0].updates.map((u) => u.next._key)).toEqual(['1.1.1.1_4710'])
     expect(calls[0].inserts.map((s) => s._key)).toEqual(['2.2.2.2_4710'])
+  })
+
+  test('strips the local-only lastPinged from committed state', async () => {
+    const {calls, commit} = deferredCommit()
+    const sync = createSanitySync({commit, debounceMs: 1500})
+
+    sync.markDirty(makeServer('1.1.1.1_4710', {lastPinged: 555}))
+    await vi.advanceTimersByTimeAsync(1500)
+
+    expect('lastPinged' in calls[0].inserts[0]).toBe(false)
   })
 
   test('emits removals and resolves dirty/removed conflicts by last write', async () => {
@@ -103,7 +173,7 @@ describe('sanitySync', () => {
     await vi.advanceTimersByTimeAsync(1500)
 
     expect(calls[0].removals).toEqual(['1.1.1.1_4710'])
-    expect([...calls[0].inserts, ...calls[0].updates].map((s) => s._key)).toEqual(['2.2.2.2_4710'])
+    expect(calls[0].inserts.map((s) => s._key)).toEqual(['2.2.2.2_4710'])
   })
 
   test('an inserted key becomes a known key, routing later changes to updates', async () => {
@@ -119,12 +189,16 @@ describe('sanitySync', () => {
     sync.markDirty(makeServer('1.1.1.1_4710', {numPlayers: 3}))
     await vi.advanceTimersByTimeAsync(1500)
     expect(calls[1].inserts).toEqual([])
-    expect(calls[1].updates.map((s) => s._key)).toEqual(['1.1.1.1_4710'])
+    expect(calls[1].updates.map((u) => u.next._key)).toEqual(['1.1.1.1_4710'])
   })
 
   test('a removed key stops being known, routing a later re-add back to inserts', async () => {
     const {calls, commit, resolve} = deferredCommit()
-    const sync = createSanitySync({commit, debounceMs: 1500, knownKeys: ['1.1.1.1_4710']})
+    const sync = createSanitySync({
+      commit,
+      debounceMs: 1500,
+      knownServers: [makeServer('1.1.1.1_4710')],
+    })
 
     sync.markRemoved('1.1.1.1_4710')
     await vi.advanceTimersByTimeAsync(1500)

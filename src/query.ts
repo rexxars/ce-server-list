@@ -17,7 +17,11 @@ const FIFTEEN_DAYS = 1000 * 60 * 60 * 24 * 15
 const geoIpCache = new LRUCache<string, string | false>({max: 500, ttl: FIFTEEN_DAYS})
 const sockets = new Set<dgram.Socket>()
 
-export async function queryServer(ip: string, port: number): Promise<Server> {
+export async function queryServer(
+  ip: string,
+  port: number,
+  previousCountryCode?: string,
+): Promise<Server> {
   const chunker = waitForQueryResponses(2)
 
   const socket = dgram.createSocket('udp4')
@@ -54,18 +58,48 @@ export async function queryServer(ip: string, port: number): Promise<Server> {
 
   const parsed = parseServer(responses, ip, port)
 
-  let countryCode = geoIpCache.get(ip)
-  if (typeof countryCode === 'undefined') {
-    const geoip = await sanityClient.request({url: `/geoip/country/${ip}`})
-    countryCode = (geoip && geoip.isoCode) || undefined
-    geoIpCache.set(ip, countryCode || false)
-  }
-
+  const countryCode = await resolveCountryCode(ip, previousCountryCode)
   if (countryCode) {
     parsed.countryCode = countryCode
   }
 
   return parsed
+}
+
+/**
+ * Resolves the ISO country code for an IP via the Sanity geoip endpoint,
+ * caching results (including "no country") for {@link FIFTEEN_DAYS}.
+ *
+ * Country enrichment is best-effort: a geoip failure resolves to `fallback`
+ * (the previously-known code, if any) rather than rejecting, so a transient
+ * outage neither fails the whole server query nor drops an already-known
+ * country. Failures are not cached, so the lookup is retried on the next ping.
+ */
+export async function resolveCountryCode(
+  ip: string,
+  fallback?: string,
+): Promise<string | undefined> {
+  const cached = geoIpCache.get(ip)
+  if (typeof cached !== 'undefined') {
+    return cached || undefined
+  }
+
+  try {
+    const geoip = await sanityClient.request<{isoCode?: string} | null>({
+      url: `/geoip/country/${ip}`,
+    })
+    const countryCode = geoip?.isoCode || undefined
+    geoIpCache.set(ip, countryCode || false)
+    return countryCode
+  } catch (err) {
+    log.warn(
+      'Failed to resolve country code for %s, keeping last known (%s): %s',
+      ip,
+      fallback ?? 'none',
+      err instanceof Error ? err.message : String(err),
+    )
+    return fallback
+  }
 }
 
 export function waitForQueryResponses(numQueries: number): {
@@ -223,10 +257,12 @@ function toInt(num: string) {
   return Number.isNaN(parsed) ? 0 : parsed
 }
 
+const noop = () => {
+  /* intentional noop */
+}
+
 function getRejectable<T = unknown>() {
-  let reject: (reason?: unknown) => void = () => {
-    /* intentional noop */
-  }
+  let reject: (reason?: unknown) => void = noop
 
   const promise = new Promise<T>((_, rejectable) => {
     reject = rejectable

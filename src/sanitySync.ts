@@ -1,10 +1,21 @@
+import {isDeepStrictEqual} from 'node:util'
+
+import {toStored, type StoredServer} from './storedServer.ts'
 import type {Server} from './typings.ts'
 
+/** An existing server whose stored state changed, paired with its last-synced state. */
+export interface ServerUpdate {
+  /** Last-synced stored state, used as the diff baseline. */
+  previous: StoredServer
+  /** New stored state to persist (carries the `_key`). */
+  next: StoredServer
+}
+
 export interface SyncChangeset {
-  /** Existing servers to overwrite, keyed by `_key`. */
-  updates: Server[]
+  /** Existing servers whose stored state changed. */
+  updates: ServerUpdate[]
   /** New servers to append to the array. */
-  inserts: Server[]
+  inserts: StoredServer[]
   /** `_key`s of servers to remove. */
   removals: string[]
 }
@@ -12,8 +23,8 @@ export interface SyncChangeset {
 export interface SanitySyncOptions {
   /** Persists a changeset. Rejects to signal failure (triggers retry). */
   commit: (changeset: SyncChangeset) => Promise<void>
-  /** `_key`s already known to exist remotely (seeds insert-vs-update decisions). */
-  knownKeys?: Iterable<string>
+  /** Servers already persisted remotely; seeds insert-vs-update and change detection. */
+  knownServers?: Iterable<Server>
   /** How long to coalesce changes before committing. */
   debounceMs?: number
   /** Initial delay before retrying a failed commit. */
@@ -33,9 +44,18 @@ export interface SanitySync {
 
 export function createSanitySync(options: SanitySyncOptions): SanitySync {
   const {commit, debounceMs = 1500, baseBackoffMs = 1000, maxBackoffMs = 30000, onError} = options
-  const knownKeys = new Set<string>(options.knownKeys)
 
-  const dirty = new Map<string, Server>()
+  // Last state we believe Sanity holds, keyed by `_key`. Advances only on a
+  // successful commit, so it doubles as the change-detection baseline and the
+  // diff source. Seeded from the backup so re-pings of unchanged servers are
+  // recognised as no-ops rather than re-written every refresh.
+  const synced = new Map<string, StoredServer>()
+  for (const server of options.knownServers ?? []) {
+    synced.set(server._key, toStored(server))
+  }
+
+  // Pending stored state to write, keyed by `_key`.
+  const dirty = new Map<string, StoredServer>()
   const removed = new Set<string>()
   let flushTimer: ReturnType<typeof setTimeout> | null = null
   let inFlight: Promise<void> | null = null
@@ -55,7 +75,12 @@ export function createSanitySync(options: SanitySyncOptions): SanitySync {
   // Merge failed work back in without clobbering newer changes that arrived
   // while the commit was in flight.
   function requeue({updates, inserts, removals}: SyncChangeset) {
-    for (const server of [...updates, ...inserts]) {
+    for (const {next} of updates) {
+      if (!dirty.has(next._key) && !removed.has(next._key)) {
+        dirty.set(next._key, next)
+      }
+    }
+    for (const server of inserts) {
       if (!dirty.has(server._key) && !removed.has(server._key)) {
         dirty.set(server._key, server)
       }
@@ -73,10 +98,15 @@ export function createSanitySync(options: SanitySyncOptions): SanitySync {
       return inFlight ?? Promise.resolve()
     }
 
-    const inserts: Server[] = []
-    const updates: Server[] = []
-    for (const [key, server] of dirty) {
-      ;(knownKeys.has(key) ? updates : inserts).push(server)
+    const inserts: StoredServer[] = []
+    const updates: ServerUpdate[] = []
+    for (const [key, next] of dirty) {
+      const previous = synced.get(key)
+      if (previous) {
+        updates.push({previous, next})
+      } else {
+        inserts.push(next)
+      }
     }
     const changeset: SyncChangeset = {updates, inserts, removals: [...removed]}
     dirty.clear()
@@ -85,8 +115,9 @@ export function createSanitySync(options: SanitySyncOptions): SanitySync {
     inFlight = (async () => {
       try {
         await commit(changeset)
-        inserts.forEach((server) => knownKeys.add(server._key))
-        changeset.removals.forEach((key) => knownKeys.delete(key))
+        updates.forEach(({next}) => synced.set(next._key, next))
+        inserts.forEach((server) => synced.set(server._key, server))
+        changeset.removals.forEach((key) => synced.delete(key))
         nextBackoffMs = baseBackoffMs
         inFlight = null
         if (hasPending()) {
@@ -106,8 +137,25 @@ export function createSanitySync(options: SanitySyncOptions): SanitySync {
   }
 
   function markDirty(server: Server) {
+    const next = toStored(server)
     removed.delete(server._key)
-    dirty.set(server._key, server)
+
+    // Skip servers whose stored state is unchanged from what we last synced —
+    // this is what keeps the 15s refresh from re-writing every server forever.
+    // `lastPinged` is excluded because it never reaches the stored form.
+    //
+    // Note: `synced` advances only on commit success, so if a server's state
+    // flaps back to the synced value during an in-flight commit we may leave
+    // Sanity one cycle stale. It self-heals on the next genuine change, so we
+    // accept that narrow race rather than tracking in-flight state.
+    const baseline = synced.get(server._key)
+    if (baseline && isDeepStrictEqual(baseline, next)) {
+      // A redundant re-ping also cancels any change still pending for this key.
+      dirty.delete(server._key)
+      return
+    }
+
+    dirty.set(server._key, next)
     nextBackoffMs = baseBackoffMs
     schedule(debounceMs)
   }

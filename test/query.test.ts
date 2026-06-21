@@ -1,6 +1,9 @@
-import {describe, expect, test} from 'vitest'
+import {describe, expect, test, vi} from 'vitest'
 
-import {parseServer, waitForQueryResponses} from '../src/query.ts'
+import {parseServer, resolveCountryCode, waitForQueryResponses} from '../src/query.ts'
+
+const {requestMock} = vi.hoisted(() => ({requestMock: vi.fn()}))
+vi.mock('../src/sanity.ts', () => ({sanityClient: {request: requestMock}}))
 
 // A \status\ reply that bundles the player list (observed on live 1.43 hosts).
 const STATUS_WITH_PLAYERS = {
@@ -173,6 +176,28 @@ describe('waitForQueryResponses', () => {
         "team_2": "blue",
       }
     `)
+  })
+})
+
+describe('resolveCountryCode', () => {
+  test('returns the isoCode resolved from the geoip endpoint', async () => {
+    requestMock.mockResolvedValueOnce({isoCode: 'NO'})
+    await expect(resolveCountryCode('203.0.113.1')).resolves.toBe('NO')
+  })
+
+  test('returns undefined without throwing when the geoip lookup fails', async () => {
+    requestMock.mockRejectedValueOnce(new Error('geoip down'))
+    await expect(resolveCountryCode('203.0.113.2')).resolves.toBeUndefined()
+  })
+
+  test('falls back to the previously-known country code when the lookup fails', async () => {
+    requestMock.mockRejectedValueOnce(new Error('geoip down'))
+    await expect(resolveCountryCode('203.0.113.4', 'NO')).resolves.toBe('NO')
+  })
+
+  test('returns undefined when the endpoint resolves no country', async () => {
+    requestMock.mockResolvedValueOnce({})
+    await expect(resolveCountryCode('203.0.113.3')).resolves.toBeUndefined()
   })
 })
 

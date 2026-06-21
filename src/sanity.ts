@@ -26,15 +26,15 @@ export function fetchServerList(): Promise<ServerList | null> {
  * array by `_key` (set/unset) and appends new servers.
  */
 export function commitChangeset(changeset: SyncChangeset): Promise<void> {
-  const {createIfNotExists, patch} = buildServerListMutations(changeset, {
+  const {createIfNotExists, patches} = buildServerListMutations(changeset, {
     documentId: SERVER_LIST_ID,
     documentType: SERVER_LIST_TYPE,
   })
 
-  return sanityClient
-    .transaction()
-    .createIfNotExists(createIfNotExists)
-    .patch(SERVER_LIST_ID, patch)
-    .commit({visibility: 'async', returnDocuments: false})
-    .then(() => undefined)
+  let transaction = sanityClient.transaction().createIfNotExists(createIfNotExists)
+  for (const patch of patches) {
+    transaction = transaction.patch(SERVER_LIST_ID, patch)
+  }
+
+  return transaction.commit({visibility: 'async', returnDocuments: false}).then(() => undefined)
 }

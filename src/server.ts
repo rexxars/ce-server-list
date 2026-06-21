@@ -56,7 +56,8 @@ async function pingServer(ip: string, portNumber: number) {
 
   log.info('[%s] Querying server for status', client)
   try {
-    const server = await queryServer(ip, portNumber)
+    const previousCountryCode = findServer(serverList, ip, portNumber)?.countryCode
+    const server = await queryServer(ip, portNumber, previousCountryCode)
     log.info('[%s] Server is online, updating status', client)
     upsertServer(serverList, server)
     sync?.markDirty(server)
@@ -112,18 +113,19 @@ async function seedFromBackup() {
   // so we never misclassify already-known servers as inserts.
   const remoteList = await fetchServerListWithRetry()
 
-  const remoteServers = (remoteList?.servers ?? []).map(withSeedPingTime)
-  const remoteKeys = new Set(remoteServers.map((seededServer) => seededServer._key))
-  for (const seededServer of remoteServers) {
+  const remoteServers = remoteList?.servers ?? []
+  const remoteKeys = new Set(remoteServers.map((remoteServer) => remoteServer._key))
+  for (const remoteServer of remoteServers) {
+    const seededServer = withSeedPingTime(remoteServer)
     seenServers.add(seededServer.ip, seededServer.queryPort)
     upsertServer(serverList, seededServer)
   }
 
-  // Only servers already present in the backup are "known"; everything else is
-  // inserted on first sync.
+  // Seed the sync with the backup's stored state so already-known servers are
+  // recognised (insert vs update) and unchanged re-pings are not re-written.
   const activeSync = createSanitySync({
     commit: commitChangeset,
-    knownKeys: remoteKeys,
+    knownServers: remoteServers,
     onError: (err) => log.warn('Failed to sync server list to Sanity: %s', errorMessage(err)),
   })
   sync = activeSync

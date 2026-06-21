@@ -31,6 +31,7 @@
   },
   "dependencies": {
     "@sanity/client": "^7.22.1",
+    "@sanity/diff-patch": "^6.0.0",
     "lru-cache": "^11.5.1",
     "pino": "^10.3.1"
   },
