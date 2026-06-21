@@ -72,8 +72,10 @@ async function pingServer(
   try {
     const previousCountryCode = findServer(serverList, ip, portNumber)?.countryCode
     const server = await queryServer(ip, portNumber, previousCountryCode)
-    log.info('[%s] Server is online, updating status', client)
+    log.info('[%s] Server is online', client)
     upsertServer(serverList, server)
+    // markDirty only schedules a Sanity write if the stored state actually
+    // changed; the "updating status" log happens at commit time (see below).
     sync?.markDirty(server)
     serverFailures[client] = 0
   } catch (err) {
@@ -182,7 +184,17 @@ async function seedFromBackup() {
   // Seed the sync with the backup's stored state so already-known servers are
   // recognised (insert vs update) and unchanged re-pings are not re-written.
   const activeSync = createSanitySync({
-    commit: commitChangeset,
+    // Logged here rather than per-ping: markDirty has already filtered to
+    // genuinely-changed servers, so this fires only when Sanity is written.
+    commit: (changeset) => {
+      log.info(
+        'Updating status in Sanity: %d updated, %d added, %d removed',
+        changeset.updates.length,
+        changeset.inserts.length,
+        changeset.removals.length,
+      )
+      return commitChangeset(changeset)
+    },
     knownServers: remoteServers,
     onError: (err) => log.warn('Failed to sync server list to Sanity: %s', errorMessage(err)),
   })
