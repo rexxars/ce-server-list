@@ -24,7 +24,7 @@ const seenServers = createSeenServers([
 let refreshTimer = setTimeout(() => null, 25)
 let sync: SanitySync | null = null
 
-async function onHeartbeat(ip: string, portNumber: number) {
+async function onHeartbeat(ip: string, portNumber: number, sourcePort: number) {
   const client = [ip, portNumber].join(':')
 
   // Non-routable hosts (LAN / loopback / reserved) are unreachable for other
@@ -34,11 +34,19 @@ async function onHeartbeat(ip: string, portNumber: number) {
     return
   }
 
+  // Source port is logged for flood diagnosis: a healthy CE server heartbeats
+  // rarely (startup + every ~5 min + on state change). A burst from one host is
+  // the host misbehaving — a stable source port means one runaway process, a
+  // changing one means a crash/restart loop.
   const firstAnnouncement = !seenServers.has(ip, portNumber)
   if (firstAnnouncement) {
-    log.info('[%s] Heartbeat received from new server, adding to known servers', client)
+    log.info(
+      '[%s] Heartbeat received from new server (UDP src port %d), adding to known servers',
+      client,
+      sourcePort,
+    )
   } else {
-    log.debug('[%s] Heartbeat received; server already in known servers', client)
+    log.debug('[%s] Heartbeat received (UDP src port %d); already known', client, sourcePort)
   }
   seenServers.add(ip, portNumber)
 

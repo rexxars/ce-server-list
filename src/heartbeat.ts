@@ -54,8 +54,14 @@ export function parseHeartbeat(buffer: Buffer): HeartbeatParse {
 }
 
 export interface HeartbeatListenerOptions {
-  /** Invoked with the datagram's source IP and the advertised query port. */
-  onHeartbeat: (ip: string, port: number) => void | Promise<void>
+  /**
+   * Invoked with the datagram's source IP, the advertised query port, and the
+   * UDP source port the datagram came from. The source port is incidental to
+   * tracking (servers are keyed by ip+queryPort), but it's useful for diagnosing
+   * heartbeat floods: a crash/restart loop changes source port each time (fresh
+   * socket), whereas one runaway process keeps the same source port.
+   */
+  onHeartbeat: (ip: string, port: number, sourcePort: number) => void | Promise<void>
 }
 
 /**
@@ -89,7 +95,7 @@ export function createHeartbeatListener(
 
     // onHeartbeat may be async; isolate failures so one bad ping cannot crash
     // the datagram handler.
-    void Promise.resolve(onHeartbeat(rinfo.address, result.port)).catch((err) => {
+    void Promise.resolve(onHeartbeat(rinfo.address, result.port, rinfo.port)).catch((err) => {
       log.warn(
         '[%s] onHeartbeat failed: %s',
         rinfo.address,

@@ -67,18 +67,19 @@ describe('parseHeartbeat', () => {
 })
 
 describe('createHeartbeatListener', () => {
-  test('invokes onHeartbeat with the datagram source IP and parsed query port', () => {
-    const heartbeats: Array<{ip: string; port: number}> = []
+  test('invokes onHeartbeat with the source IP, parsed query port, and UDP source port', () => {
+    const heartbeats: Array<{ip: string; port: number; sourcePort: number}> = []
     const onMessage = createHeartbeatListener({
-      onHeartbeat: (ip, port) => {
-        heartbeats.push({ip, port})
+      onHeartbeat: (ip, port, sourcePort) => {
+        heartbeats.push({ip, port, sourcePort})
       },
     })
 
     const datagram = heartbeat('4711')
     onMessage(datagram, rinfo('203.0.113.7', datagram.length))
 
-    expect(heartbeats).toEqual([{ip: '203.0.113.7', port: 4711}])
+    // rinfo() in this file uses source port 57426.
+    expect(heartbeats).toEqual([{ip: '203.0.113.7', port: 4711, sourcePort: 57426}])
   })
 
   test('ignores a datagram that is not a heartbeat', () => {
