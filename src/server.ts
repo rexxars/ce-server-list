@@ -38,7 +38,7 @@ async function onHeartbeat(ip: string, portNumber: number) {
   if (firstAnnouncement) {
     log.info('[%s] Heartbeat received from new server, adding to known servers', client)
   } else {
-    log.info('[%s] Heartbeat received; server already in known servers', client)
+    log.debug('[%s] Heartbeat received; server already in known servers', client)
   }
   seenServers.add(ip, portNumber)
 
