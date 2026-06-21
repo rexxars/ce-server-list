@@ -13,6 +13,15 @@ export function findServer(servers: Server[], ip: string, port: number): Server 
   return servers.find((server) => server.ip === ip && server.queryPort === port)
 }
 
+/**
+ * Returns a copy of `servers` sorted by `_key`. Both the rendered HTML and the
+ * live frontend sort by `_key` so servers keep a stable order and do not shuffle
+ * around between renders.
+ */
+export function sortByKey(servers: Server[]): Server[] {
+  return servers.toSorted((a, b) => a._key.localeCompare(b._key))
+}
+
 export function upsertServer(servers: Server[], server: Server): Server[] {
   const existing = findServer(servers, server.ip, server.queryPort)
   const exisitingIndex = existing && servers.indexOf(existing)

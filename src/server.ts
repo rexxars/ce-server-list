@@ -9,6 +9,8 @@ import {commitChangeset, fetchServerList} from './sanity.ts'
 import {createSeenServers} from './seenServers.ts'
 import {createSanitySync, type SanitySync} from './sanitySync.ts'
 import {createHeartbeatListener} from './heartbeat.ts'
+import {createHttpServer} from './http.ts'
+import {isPublicIp} from './ipFilter.ts'
 import {findServer, removeServer, upsertServer, withSeedPingTime} from './serverlist.ts'
 
 const checking = new Set<string>()
@@ -24,6 +26,13 @@ let sync: SanitySync | null = null
 
 async function onHeartbeat(ip: string, portNumber: number) {
   const client = [ip, portNumber].join(':')
+
+  // Non-routable hosts (LAN / loopback / reserved) are unreachable for other
+  // players, so never track them — drop the heartbeat before anything else.
+  if (!isPublicIp(ip)) {
+    log.debug('[%s] Ignoring heartbeat from non-public IP', client)
+    return
+  }
 
   if (seenServers.has(ip, portNumber)) {
     log.info('[%s] Heartbeat received; server already in known servers', client)
@@ -97,12 +106,25 @@ server.on('error', (err) => {
   log.error('Heartbeat socket error: %s', err.message)
 })
 
+// Public-facing HTTP server: serves the server list page and `/iplist.txt`.
+const httpServer = createHttpServer({getServers: () => serverList})
+httpServer.on('listening', () => {
+  const address = httpServer.address()
+  if (address && typeof address === 'object') {
+    log.info('Serving HTTP on %s:%d', address.address, address.port)
+  }
+})
+httpServer.on('error', (err) => {
+  log.error('HTTP server error: %s', err.message)
+})
+
 start()
 
 function start() {
   // Start serving immediately so a Sanity outage does not take the master
   // server offline; the backup seed is fetched (with retries) in the background.
   server.bind(config.port, config.host)
+  httpServer.listen(config.httpPort, config.host)
   refreshServers()
   seedFromBackup()
 }
@@ -113,7 +135,15 @@ async function seedFromBackup() {
   // so we never misclassify already-known servers as inserts.
   const remoteList = await fetchServerListWithRetry()
 
-  const remoteServers = remoteList?.servers ?? []
+  // Defend against stale backup entries: a private IP could have been persisted
+  // by an earlier build, so re-validate on seed rather than re-adding it.
+  const remoteServers = (remoteList?.servers ?? []).filter((remoteServer) => {
+    if (isPublicIp(remoteServer.ip)) {
+      return true
+    }
+    log.warn('[%s:%d] Skipping non-public IP from backup', remoteServer.ip, remoteServer.queryPort)
+    return false
+  })
   const remoteKeys = new Set(remoteServers.map((remoteServer) => remoteServer._key))
   for (const remoteServer of remoteServers) {
     const seededServer = withSeedPingTime(remoteServer)
@@ -181,7 +211,10 @@ process.on('SIGTERM', async () => {
   clearTimeout(refreshTimer)
 
   await Promise.race([
-    new Promise<void>((resolve) => server.close(() => resolve())),
+    Promise.all([
+      new Promise<void>((resolve) => server.close(() => resolve())),
+      new Promise<void>((resolve) => httpServer.close(() => resolve())),
+    ]),
     new Promise<void>((resolve) => setTimeout(resolve, 15000)),
   ])
 

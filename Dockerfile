@@ -19,4 +19,7 @@ COPY . .
 # Gamespy master server port (UDP)
 EXPOSE 27900/udp
 
+# Public-facing HTTP server (server list page + /iplist.txt)
+EXPOSE 8080/tcp
+
 CMD ["node", "src/server.ts"]
