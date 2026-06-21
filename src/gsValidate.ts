@@ -1,4 +1,4 @@
-// GameSpy "secure"/"validate" challenge–response, reverse-engineered from
+// GameSpy "secure"/"validate" challenge-response, reverse-engineered from
 // Codename Eagle's ce.exe. A querier sends `\secure\<challenge>` (alone or
 // appended to a `\status\`/`\basic\` query) to the server's QUERY port (4711),
 // and the server appends `\validate\<response>` to its reply, where the response
@@ -9,11 +9,11 @@
 //   - gamename:   "cneagle"
 //   - secret key: "HNvEAc"  (bytes 48 4E 76 45 41 63 at .data:0x557b80, written
 //                            during GameSpy init)
-//   - transform:  GameSpy `gs_encrypt` (0x4245d0) — a modified RC4 whose
-//                 keystream folds in each plaintext byte — followed by standard
+//   - transform:  GameSpy `gs_encrypt` (0x4245d0) - a modified RC4 whose
+//                 keystream folds in each plaintext byte - followed by standard
 //                 base64 (encoder 0x4244e0, alphabet map 0x4245a0).
 //
-// NOTE: reference crypto — NOT used in the master's trust path. `ce.exe` runs
+// NOTE: reference crypto - NOT used in the master's trust path. `ce.exe` runs
 // `\secure\` on the query port (not the UDP heartbeat socket), and the key is
 // public, so a valid `\validate\` proves only "knows a published constant". The
 // master instead trusts a server by querying its advertised `<ip>:<queryPort>`
@@ -67,7 +67,7 @@ function gsEncrypt(data: Uint8Array, key: string): void {
 
 /**
  * Standard base64 over raw bytes, but always emitting whole 4-character groups
- * with no `=` padding (zero-filling a short final group) — exactly how ce.exe's
+ * with no `=` padding (zero-filling a short final group) - exactly how ce.exe's
  * encoder behaves.
  */
 function gsEncode(bytes: Uint8Array): string {

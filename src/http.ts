@@ -13,18 +13,24 @@ const STATIC_DIR = path.join(import.meta.dirname, '..', 'static')
 const EMPTY_FLAG =
   'data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgMSAxIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxyZWN0IHdpZHRoPSIxIiBoZWlnaHQ9IjEiIHN0eWxlPSJmaWxsOiByZ2JhKDI1NSwgMjU1LCAyNTUsIDApOyI+PC9yZWN0Pjwvc3ZnPg=='
 
-// Hardcoded content types for the handful of file extensions we serve — keeps
+// Hardcoded content types for the handful of file extensions we serve - keeps
 // the static server dependency-free.
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.ico': 'image/x-icon',
+  '.exe': 'application/octet-stream',
 }
 
 // Allow-list of static assets we are willing to serve, guarding against path
 // traversal: only these exact filenames map to a file on disk.
-const STATIC_FILES = new Set(['styles.css', 'servers.js', 'favicon.ico'])
+const STATIC_FILES = new Set([
+  'styles.css',
+  'servers.js',
+  'favicon.ico',
+  'ce-master-patch.exe',
+])
 
 // Cache-Control policies. Dynamic responses get a short TTL so updates surface
 // quickly; the favicon effectively never changes so it can be cached for a year;
@@ -42,8 +48,10 @@ export interface HttpServerOptions {
  * Builds the public-facing HTTP server using only Node built-ins:
  *
  * - `GET /` renders the server list from the current in-memory state.
+ * - `GET /help` serves the "host your own server" guide.
  * - `GET /iplist.txt` lists the IPs of all known online servers.
- * - `GET /styles.css|/servers.js|/favicon.ico` serves the static assets.
+ * - `GET /styles.css|/servers.js|/favicon.ico|/ce-master-patch.exe` serves the
+ *   static assets.
  *
  * The `/api` endpoint is intentionally not exposed; the frontend reads live
  * updates directly from Sanity's listen endpoint instead.
@@ -51,11 +59,11 @@ export interface HttpServerOptions {
 export function createHttpServer(options: HttpServerOptions): http.Server {
   const {getServers} = options
 
-  // The index template is read once and cached; the dynamic rows are injected
-  // on each request.
-  let templatePromise: Promise<string> | null = null
-  const loadTemplate = () =>
-    (templatePromise ??= readFile(path.join(STATIC_DIR, 'index.html'), 'utf8'))
+  // HTML pages are read once and cached by filename. `/` injects dynamic rows
+  // into its template on each request; `/help` is served verbatim.
+  const htmlCache = new Map<string, Promise<string>>()
+  const loadHtml = (name: string) =>
+    htmlCache.get(name) ?? htmlCache.set(name, readFile(path.join(STATIC_DIR, name), 'utf8')).get(name)!
 
   // Static assets are read, fingerprinted and cached once on first request.
   const staticCache = new Map<string, Promise<StaticAsset>>()
@@ -63,7 +71,7 @@ export function createHttpServer(options: HttpServerOptions): http.Server {
     staticCache.get(name) ?? staticCache.set(name, readStatic(name)).get(name)!
 
   return http.createServer((req, res) => {
-    handleRequest(req, res, getServers, loadTemplate, loadStatic).catch((err) => {
+    handleRequest(req, res, getServers, loadHtml, loadStatic).catch((err) => {
       log.warn('HTTP request failed: %s', err instanceof Error ? err.message : String(err))
       if (!res.headersSent) {
         send(req, res, 500, 'text/plain; charset=utf-8', 'Internal Server Error\n', REVALIDATE)
@@ -92,7 +100,7 @@ async function handleRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   getServers: () => Server[],
-  loadTemplate: () => Promise<string>,
+  loadHtml: (name: string) => Promise<string>,
   loadStatic: (name: string) => Promise<StaticAsset>,
 ): Promise<void> {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -103,8 +111,13 @@ async function handleRequest(
   const {pathname} = new URL(req.url ?? '/', 'http://localhost')
 
   if (pathname === '/') {
-    const html = renderIndex(await loadTemplate(), sortByKey(getServers()))
+    const html = renderIndex(await loadHtml('index.html'), sortByKey(getServers()))
     send(req, res, 200, 'text/html; charset=utf-8', html, SHORT_TTL)
+    return
+  }
+
+  if (pathname === '/help') {
+    send(req, res, 200, 'text/html; charset=utf-8', await loadHtml('help.html'), SHORT_TTL)
     return
   }
 
@@ -130,13 +143,19 @@ async function handleRequest(
       return
     }
 
-    // JS/CSS revalidate against the ETag: reply 304 when the client's copy matches.
+    // JS/CSS/the patch binary revalidate against the ETag: reply 304 when the
+    // client's copy matches.
     if (req.headers['if-none-match'] === etag) {
       res.writeHead(304, {etag, 'cache-control': REVALIDATE})
       res.end()
       return
     }
-    send(req, res, 200, contentType, body, REVALIDATE, etag)
+
+    // Force the patch binary to download rather than letting the browser try to
+    // navigate to it. The URL basename is already the right filename.
+    const extraHeaders =
+      name === 'ce-master-patch.exe' ? {'content-disposition': 'attachment'} : undefined
+    send(req, res, 200, contentType, body, REVALIDATE, etag, extraHeaders)
     return
   }
 
@@ -202,12 +221,14 @@ function send(
   body: string | Buffer,
   cacheControl: string,
   etag?: string,
+  extraHeaders?: http.OutgoingHttpHeaders,
 ): void {
   const buffer = Buffer.isBuffer(body) ? body : Buffer.from(body)
   const headers: http.OutgoingHttpHeaders = {
     'content-type': contentType,
     'content-length': buffer.length,
     'cache-control': cacheControl,
+    ...extraHeaders,
   }
   if (etag) {
     headers.etag = etag

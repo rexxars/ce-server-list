@@ -1,0 +1,180 @@
+<!doctype html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta charset="utf-8" />
+    <title>Host a server - Codename Eagle</title>
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+      main h2 {
+        font-size: 1.2rem;
+        margin: 1.75rem 0 0.5rem;
+      }
+      main p,
+      main li {
+        line-height: 1.5;
+        margin-bottom: 0.5rem;
+      }
+      main ol,
+      main ul {
+        margin: 0.5rem 0 1rem 1.5rem;
+      }
+      .download {
+        display: inline-block;
+        margin: 0.4rem 0;
+        padding: 0.55rem 1rem;
+        background: blue;
+        color: #fff;
+        border-radius: 6px;
+        text-decoration: none;
+        font-weight: 600;
+      }
+      pre {
+        background: #eee;
+        padding: 0.6rem 0.8rem;
+        border-radius: 4px;
+        overflow-x: auto;
+        margin: 0.4rem 0 1rem;
+        font-size: 0.9rem;
+      }
+      .ports {
+        margin: 0.5rem 0 1rem;
+      }
+      .ports th,
+      .ports td {
+        border: 1px solid #ddd;
+        padding: 0.35rem 0.6rem;
+      }
+      .note {
+        background: #fff8e1;
+        border-left: 3px solid #f0c040;
+        padding: 0.6rem 0.8rem;
+        margin: 0.5rem 0 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="content">
+      <header>
+        <h1>Host a Codename Eagle server</h1>
+        <p>
+          Get your server onto the <a href="/">live list</a> by announcing to
+          <code>ceservers.net</code> - the GameSpy master-server replacement for
+          Codename Eagle.
+        </p>
+      </header>
+
+      <main>
+        <h2>Quick start</h2>
+        <ol>
+          <li>
+            Download the patcher:
+            <a class="download" href="/ce-master-patch.exe">ce-master-patch.exe</a>
+          </li>
+          <li>Put it in your Codename Eagle folder - the one containing <code>ce.exe</code>.</li>
+          <li>Run it (double-click, or run it from a command prompt).</li>
+          <li>
+            Host a game the way you normally would. Your server now announces to
+            <code>ceservers.net</code> and shows up on the <a href="/">list</a>.
+          </li>
+        </ol>
+        <p>
+          That's the whole thing. The patcher saves your original as
+          <code>ce.exe.bak</code> first and is safe to run more than once.
+        </p>
+
+        <div class="note">
+          <strong>Open your ports.</strong> For other players to find and join you,
+          your router/firewall needs to allow inbound <strong>UDP 4711</strong> (so
+          the master can read your server's details) and <strong>UDP 24711</strong>
+          (so players can join). If 4711 can't be reached, your server announces but
+          never gets listed.
+        </div>
+
+        <h2>What the patcher does</h2>
+        <p>
+          Codename Eagle was built to announce itself to GameSpy's master server,
+          whose address <code>master.gamespy.com</code> is baked into
+          <code>ce.exe</code>. GameSpy shut down years ago, so out of the box that
+          announcement goes nowhere.
+        </p>
+        <p>
+          The patcher changes that one hard-coded hostname to
+          <code>ceservers.net</code>, right inside <code>ce.exe</code>:
+        </p>
+        <pre>master.gamespy.com               (18 bytes)
+ceservers.net + 00 00 00 00 00   (13 bytes + 5 zero bytes = 18)</pre>
+        <p>
+          <code>ceservers.net</code> is shorter, so it's written over the same
+          bytes and padded with zeros (a C string ends at the first zero byte, so
+          the game just reads <code>ceservers.net</code>). Nothing else is touched:
+          the file stays exactly the same size, no game code changes, and the
+          original is kept as <code>ce.exe.bak</code>. It works on Codename Eagle
+          versions 1.33 or later.
+        </p>
+
+        <h2>How announcing works</h2>
+        <p>
+          When you host a game, the patched <code>ce.exe</code> sends a small
+          <em>heartbeat</em> over UDP to <code>ceservers.net</code> (the GameSpy
+          heartbeat, port <strong>27900</strong>) that says, in effect, "I'm here,
+          and you can query me on port 4711." It sends this at startup, then about
+          once every five minutes and whenever the game state changes - it never
+          waits for a reply.
+        </p>
+        <p>
+          The master then <em>queries your server back</em> on UDP
+          <strong>4711</strong> to confirm it's real and read its details - name,
+          map, players, game type. Those details are what appear on the
+          <a href="/">server list</a>. Players themselves connect to your game on
+          UDP <strong>24711</strong>.
+        </p>
+        <table class="ports">
+          <thead>
+            <tr>
+              <th>UDP port</th>
+              <th>Direction</th>
+              <th>Purpose</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>27900</td>
+              <td>your server → ceservers.net</td>
+              <td>announce (heartbeat)</td>
+            </tr>
+            <tr>
+              <td>4711</td>
+              <td>ceservers.net → your server</td>
+              <td>status query - must be reachable to get listed</td>
+            </tr>
+            <tr>
+              <td>24711</td>
+              <td>players ↔ your server</td>
+              <td>gameplay / joining</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h2>Undo</h2>
+        <p>The patcher kept a backup, so restoring the stock binary is one copy:</p>
+        <pre>copy /y ce.exe.bak ce.exe</pre>
+      </main>
+
+      <footer>
+        <p>
+          Gamespy master server replacement made by
+          <a href="https://espen.codes/" rel="noreferrer noopener">Espen Hovlandsdal</a>.
+        </p>
+        <p>
+          Check out
+          <a href="http://codenameeagle.net/" rel="noreferrer noopener">Codename Eagle Nation</a>
+          and
+          <a href="https://codenameeaglemultiplayer.com/" rel="noreferrer noopener"
+            >Codename Eagle Multiplayer</a
+          >!
+        </p>
+      </footer>
+    </div>
+  </body>
+</html>

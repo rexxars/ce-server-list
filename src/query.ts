@@ -179,7 +179,7 @@ export function parseServer(responses: QueryResponse[], ip: string, port: number
 
 // Player rows arrive as `<field>_<index>` keys. Depending on the server version
 // they show up in the dedicated `\players\` reply, bundled into the `\status\`
-// reply (1.43), or both — so we harvest them from every response.
+// reply (1.43), or both - so we harvest them from every response.
 const PLAYER_KEY = /^(?:player|frags|deaths|skill|ping|team)_\d+$/
 
 function assembleResponses(responses: QueryResponse[]): AggregatedResponse {

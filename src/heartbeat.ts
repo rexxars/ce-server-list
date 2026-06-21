@@ -20,7 +20,7 @@ export type HeartbeatParse =
  *
  * - `heartbeat`: a complete frame carrying a valid query port.
  * - `malformed`: a complete frame but no usable query port.
- * - `invalid` / `incomplete`: not a (full) heartbeat — ignore the datagram.
+ * - `invalid` / `incomplete`: not a (full) heartbeat - ignore the datagram.
  *
  * The port is taken from whatever digits sit between the prefix and the located
  * suffix, so 3-to-5 digit ports and any trailing bytes are tolerated.
@@ -69,8 +69,8 @@ export interface HeartbeatListenerOptions {
  * heartbeat and, on success, `onHeartbeat(sourceIp, queryPort)` is invoked.
  * Non-heartbeat / malformed datagrams are ignored.
  *
- * `ce.exe` announces over **UDP** — confirmed by live capture, heartbeats arrive
- * on UDP/27900 and never TCP — so there is no connection or byte stream to
+ * `ce.exe` announces over **UDP** - confirmed by live capture, heartbeats arrive
+ * on UDP/27900 and never TCP - so there is no connection or byte stream to
  * manage; one datagram is one frame. Authenticity is established downstream by
  * querying the advertised `<ip>:<queryPort>` back (a spoofed heartbeat points at
  * a host that will not answer `\status\`), so no `\secure\` handshake is run

@@ -140,7 +140,7 @@ export function createSanitySync(options: SanitySyncOptions): SanitySync {
     const next = toStored(server)
     removed.delete(server._key)
 
-    // Skip servers whose stored state is unchanged from what we last synced —
+    // Skip servers whose stored state is unchanged from what we last synced -
     // this is what keeps the 15s refresh from re-writing every server forever.
     // `lastPinged` is excluded because it never reaches the stored form.
     //

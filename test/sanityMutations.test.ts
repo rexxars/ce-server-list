@@ -74,7 +74,7 @@ describe('buildServerListMutations', () => {
       {documentId: 'serverList', documentType: 'serverList'},
     )
 
-    // Only numPlayers changed — the whole record is NOT replaced.
+    // Only numPlayers changed - the whole record is NOT replaced.
     expect(setOps(mutations.patches)).toEqual({
       'servers[_key=="1.1.1.1_4710"].numPlayers': 4,
     })

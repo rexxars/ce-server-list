@@ -28,7 +28,7 @@ async function onHeartbeat(ip: string, portNumber: number, sourcePort: number) {
   const client = [ip, portNumber].join(':')
 
   // Non-routable hosts (LAN / loopback / reserved) are unreachable for other
-  // players, so never track them — drop the heartbeat before anything else.
+  // players, so never track them - drop the heartbeat before anything else.
   if (!isPublicIp(ip)) {
     log.debug('[%s] Ignoring heartbeat from non-public IP', client)
     return
@@ -36,7 +36,7 @@ async function onHeartbeat(ip: string, portNumber: number, sourcePort: number) {
 
   // Source port is logged for flood diagnosis: a healthy CE server heartbeats
   // rarely (startup + every ~5 min + on state change). A burst from one host is
-  // the host misbehaving — a stable source port means one runaway process, a
+  // the host misbehaving - a stable source port means one runaway process, a
   // changing one means a crash/restart loop.
   const firstAnnouncement = !seenServers.has(ip, portNumber)
   if (firstAnnouncement) {
@@ -91,7 +91,7 @@ async function pingServer(
     serverFailures[client] = (serverFailures[client] || 0) + 1
 
     // A server that announces but fails its very first query has never been
-    // reachable on its query port — typically a firewall / port-forwarding
+    // reachable on its query port - typically a firewall / port-forwarding
     // misconfiguration on the host. Log it distinctly so it can be tracked
     // separately from a known server that briefly flaked.
     if (firstAnnouncement) {
@@ -169,7 +169,7 @@ function start() {
 
 async function seedFromBackup() {
   // Seed from the durable Sanity backup so a restart does not lose the set of
-  // known servers. Retried until it succeeds — syncing is deferred until then
+  // known servers. Retried until it succeeds - syncing is deferred until then
   // so we never misclassify already-known servers as inserts.
   const remoteList = await fetchServerListWithRetry()
 
@@ -229,7 +229,7 @@ async function fetchServerListWithRetry(): Promise<ServerList | null> {
       return await fetchServerList()
     } catch (err) {
       // Exponential backoff for the first few retries, then settle into a
-      // patient steady poll — the server already runs, this only backfills.
+      // patient steady poll - the server already runs, this only backfills.
       const delayMs = attempt < retries ? baseBackoffMs * 2 ** attempt : waitMs
       log.warn(
         'Failed to fetch server list from Sanity (attempt %d): %s. Retrying in %d ms',

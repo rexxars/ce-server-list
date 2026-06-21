@@ -1,7 +1,7 @@
 /**
  * Guards the server list against non-routable addresses. A heartbeat (or a
  * stale backup entry) carrying a LAN / loopback / reserved IP is useless to
- * other players — nobody on the public internet can reach `192.168.x.x` — so we
+ * other players - nobody on the public internet can reach `192.168.x.x` - so we
  * never add such hosts to the list.
  *
  * The heartbeat socket is UDP/IPv4, so addresses are effectively IPv4 (possibly
@@ -10,7 +10,7 @@
 export function isPublicIp(ip: string): boolean {
   const normalized = ip.trim().toLowerCase()
 
-  // IPv4-mapped IPv6 (e.g. `::ffff:192.168.1.1`) — judge by the embedded IPv4.
+  // IPv4-mapped IPv6 (e.g. `::ffff:192.168.1.1`) - judge by the embedded IPv4.
   const mapped = normalized.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/)
   if (mapped) {
     return isPublicIpv4(mapped[1])
@@ -54,7 +54,7 @@ function isPublicIpv4(ip: string): boolean {
   if (a === 198 && (b === 18 || b === 19)) return false // 198.18.0.0/15 benchmarking
   if (a >= 224) return false // 224.0.0.0/4 multicast + 240.0.0.0/4 reserved + broadcast
 
-  // Documentation ranges (TEST-NET-1/2/3) — never real hosts.
+  // Documentation ranges (TEST-NET-1/2/3) - never real hosts.
   if (a === 192 && b === 0 && parts[2] === 2) return false
   if (a === 198 && b === 51 && parts[2] === 100) return false
   if (a === 203 && b === 0 && parts[2] === 113) return false
