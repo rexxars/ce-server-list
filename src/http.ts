@@ -26,6 +26,13 @@ const MIME_TYPES: Record<string, string> = {
 // traversal: only these exact filenames map to a file on disk.
 const STATIC_FILES = new Set(['styles.css', 'servers.js', 'favicon.ico'])
 
+// Cache-Control policies. Dynamic responses get a short TTL so updates surface
+// quickly; the favicon effectively never changes so it can be cached for a year;
+// versioned assets (JS/CSS) revalidate against an ETag on every request.
+const SHORT_TTL = 'public, max-age=5'
+const IMMUTABLE_TTL = 'public, max-age=31536000, immutable'
+const REVALIDATE = 'no-cache'
+
 export interface HttpServerOptions {
   /** Returns the current in-memory list of online servers. */
   getServers: () => Server[]
@@ -50,11 +57,16 @@ export function createHttpServer(options: HttpServerOptions): http.Server {
   const loadTemplate = () =>
     (templatePromise ??= readFile(path.join(STATIC_DIR, 'index.html'), 'utf8'))
 
+  // Static assets are read, fingerprinted and cached once on first request.
+  const staticCache = new Map<string, Promise<StaticAsset>>()
+  const loadStatic = (name: string) =>
+    staticCache.get(name) ?? staticCache.set(name, readStatic(name)).get(name)!
+
   return http.createServer((req, res) => {
-    handleRequest(req, res, getServers, loadTemplate).catch((err) => {
+    handleRequest(req, res, getServers, loadTemplate, loadStatic).catch((err) => {
       log.warn('HTTP request failed: %s', err instanceof Error ? err.message : String(err))
       if (!res.headersSent) {
-        send(req, res, 500, 'text/plain; charset=utf-8', 'Internal Server Error\n')
+        send(req, res, 500, 'text/plain; charset=utf-8', 'Internal Server Error\n', REVALIDATE)
       } else {
         res.end()
       }
@@ -62,14 +74,29 @@ export function createHttpServer(options: HttpServerOptions): http.Server {
   })
 }
 
+interface StaticAsset {
+  body: Buffer
+  contentType: string
+  etag: string
+}
+
+async function readStatic(name: string): Promise<StaticAsset> {
+  const body = await readFile(path.join(STATIC_DIR, name))
+  const contentType = MIME_TYPES[path.extname(name)] ?? 'application/octet-stream'
+  const digest = await crypto.subtle.digest('SHA-256', body)
+  const etag = `"${Buffer.from(digest).toString('hex').slice(0, 16)}"`
+  return {body, contentType, etag}
+}
+
 async function handleRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   getServers: () => Server[],
   loadTemplate: () => Promise<string>,
+  loadStatic: (name: string) => Promise<StaticAsset>,
 ): Promise<void> {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
-    send(req, res, 405, 'text/plain; charset=utf-8', 'Method Not Allowed\n')
+    send(req, res, 405, 'text/plain; charset=utf-8', 'Method Not Allowed\n', REVALIDATE)
     return
   }
 
@@ -77,24 +104,43 @@ async function handleRequest(
 
   if (pathname === '/') {
     const html = renderIndex(await loadTemplate(), sortByKey(getServers()))
-    send(req, res, 200, 'text/html; charset=utf-8', html)
+    send(req, res, 200, 'text/html; charset=utf-8', html, SHORT_TTL)
     return
   }
 
   if (pathname === '/iplist.txt') {
-    send(req, res, 200, 'text/plain; charset=utf-8', renderIpList(sortByKey(getServers())))
+    send(
+      req,
+      res,
+      200,
+      'text/plain; charset=utf-8',
+      renderIpList(sortByKey(getServers())),
+      SHORT_TTL,
+    )
     return
   }
 
   const name = pathname.slice(1)
   if (STATIC_FILES.has(name)) {
-    const body = await readFile(path.join(STATIC_DIR, name))
-    const contentType = MIME_TYPES[path.extname(name)] ?? 'application/octet-stream'
-    send(req, res, 200, contentType, body)
+    const {body, contentType, etag} = await loadStatic(name)
+
+    // The favicon effectively never changes, so cache it aggressively.
+    if (name === 'favicon.ico') {
+      send(req, res, 200, contentType, body, IMMUTABLE_TTL)
+      return
+    }
+
+    // JS/CSS revalidate against the ETag: reply 304 when the client's copy matches.
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, {etag, 'cache-control': REVALIDATE})
+      res.end()
+      return
+    }
+    send(req, res, 200, contentType, body, REVALIDATE, etag)
     return
   }
 
-  send(req, res, 404, 'text/plain; charset=utf-8', 'Not Found\n')
+  send(req, res, 404, 'text/plain; charset=utf-8', 'Not Found\n', REVALIDATE)
 }
 
 function renderIndex(template: string, servers: Server[]): string {
@@ -154,12 +200,18 @@ function send(
   status: number,
   contentType: string,
   body: string | Buffer,
+  cacheControl: string,
+  etag?: string,
 ): void {
   const buffer = Buffer.isBuffer(body) ? body : Buffer.from(body)
-  res.writeHead(status, {
+  const headers: http.OutgoingHttpHeaders = {
     'content-type': contentType,
     'content-length': buffer.length,
-    'cache-control': 'no-cache',
-  })
+    'cache-control': cacheControl,
+  }
+  if (etag) {
+    headers.etag = etag
+  }
+  res.writeHead(status, headers)
   res.end(req.method === 'HEAD' ? undefined : buffer)
 }
