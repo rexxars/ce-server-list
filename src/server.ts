@@ -23,10 +23,16 @@ let refreshTimer = setTimeout(() => null, 25)
 let sync: SanitySync | null = null
 
 async function onHeartbeat(ip: string, portNumber: number) {
+  const client = [ip, portNumber].join(':')
+
+  if (seenServers.has(ip, portNumber)) {
+    log.info('[%s] Heartbeat received; server already in known servers', client)
+  } else {
+    log.info('[%s] Heartbeat received from new server, adding to known servers', client)
+  }
   seenServers.add(ip, portNumber)
 
   const now = Date.now()
-  const client = [ip, portNumber].join(':')
   const threshold = now - config.checkThresholdMs
 
   const server = findServer(serverList, ip, portNumber)
@@ -40,7 +46,7 @@ async function onHeartbeat(ip: string, portNumber: number) {
     return
   }
 
-  log.info('[%s] Heartbeat from server, checking server info', client)
+  log.info('[%s] Checking server info', client)
   await pingServer(ip, portNumber)
 }
 
@@ -63,6 +69,11 @@ async function pingServer(ip: string, portNumber: number) {
       const existing = findServer(serverList, ip, portNumber)
       removeServer(serverList, ip, portNumber)
       if (existing) {
+        log.warn(
+          '[%s] Server unresponsive after %d failed queries, dropping from list',
+          client,
+          serverFailures[client],
+        )
         sync?.markRemoved(existing._key)
       }
     }

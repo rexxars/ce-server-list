@@ -79,7 +79,7 @@ export function createHeartbeatListener(
     const result = parseHeartbeat(msg)
     if (result.type !== 'heartbeat') {
       log.debug(
-        '[%s:%d] Ignoring non-heartbeat datagram (%s)',
+        '[%s:%d] Received invalid UDP datagram, ignoring (%s)',
         rinfo.address,
         rinfo.port,
         result.type,
