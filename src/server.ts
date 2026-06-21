@@ -34,10 +34,11 @@ async function onHeartbeat(ip: string, portNumber: number) {
     return
   }
 
-  if (seenServers.has(ip, portNumber)) {
-    log.info('[%s] Heartbeat received; server already in known servers', client)
-  } else {
+  const firstAnnouncement = !seenServers.has(ip, portNumber)
+  if (firstAnnouncement) {
     log.info('[%s] Heartbeat received from new server, adding to known servers', client)
+  } else {
+    log.info('[%s] Heartbeat received; server already in known servers', client)
   }
   seenServers.add(ip, portNumber)
 
@@ -56,10 +57,14 @@ async function onHeartbeat(ip: string, portNumber: number) {
   }
 
   log.info('[%s] Checking server info', client)
-  await pingServer(ip, portNumber)
+  await pingServer(ip, portNumber, {firstAnnouncement})
 }
 
-async function pingServer(ip: string, portNumber: number) {
+async function pingServer(
+  ip: string,
+  portNumber: number,
+  {firstAnnouncement = false}: {firstAnnouncement?: boolean} = {},
+) {
   const client = [ip, portNumber].join(':')
   checking.add(client)
 
@@ -75,16 +80,39 @@ async function pingServer(ip: string, portNumber: number) {
     log.warn('[%s] Failed to query server: %s', client, errorMessage(err))
     serverFailures[client] = (serverFailures[client] || 0) + 1
 
-    if (serverFailures[client] > 5) {
+    // A server that announces but fails its very first query has never been
+    // reachable on its query port — typically a firewall / port-forwarding
+    // misconfiguration on the host. Log it distinctly so it can be tracked
+    // separately from a known server that briefly flaked.
+    if (firstAnnouncement) {
+      log.info(
+        '[%s] New server announced but was unreachable on its query port (firewall/port-forwarding?)',
+        client,
+      )
+    }
+
+    const failures = serverFailures[client]
+    if (failures > 5) {
       const existing = findServer(serverList, ip, portNumber)
       removeServer(serverList, ip, portNumber)
+      // Prune from the re-ping rotation too, so an unreachable announcer is not
+      // queried forever. If it later becomes reachable it will announce again
+      // and be re-added with a fresh failure budget.
+      seenServers.remove(ip, portNumber)
+      delete serverFailures[client]
       if (existing) {
         log.warn(
           '[%s] Server unresponsive after %d failed queries, dropping from list',
           client,
-          serverFailures[client],
+          failures,
         )
         sync?.markRemoved(existing._key)
+      } else {
+        log.info(
+          '[%s] Server unreachable after %d failed queries, dropping from re-ping rotation',
+          client,
+          failures,
+        )
       }
     }
   }

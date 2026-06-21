@@ -8,6 +8,7 @@ export interface SeenServer {
 export interface SeenServers {
   add(ip: string, queryPort: number): void
   has(ip: string, queryPort: number): boolean
+  remove(ip: string, queryPort: number): void
   entries(): SeenServer[]
 }
 
@@ -28,9 +29,13 @@ export function createSeenServers(initial: Iterable<SeenServer> = []): SeenServe
     return seen.has(`${ip}:${queryPort || DEFAULT_QUERY_PORT}`)
   }
 
+  function remove(ip: string, queryPort: number) {
+    seen.delete(`${ip}:${queryPort || DEFAULT_QUERY_PORT}`)
+  }
+
   for (const {ip, queryPort} of initial) {
     add(ip, queryPort)
   }
 
-  return {add, has, entries: () => [...seen.values()]}
+  return {add, has, remove, entries: () => [...seen.values()]}
 }
