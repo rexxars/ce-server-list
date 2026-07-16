@@ -11,9 +11,9 @@ describe('seenServers', () => {
     seen.add('2.2.2.2', 4711)
 
     expect(seen.entries()).toEqual([
-      {ip: '1.1.1.1', queryPort: 4711},
-      {ip: '1.1.1.1', queryPort: 5000},
-      {ip: '2.2.2.2', queryPort: 4711},
+      {ip: '1.1.1.1', queryPort: 4711, verified: false},
+      {ip: '1.1.1.1', queryPort: 5000, verified: false},
+      {ip: '2.2.2.2', queryPort: 4711, verified: false},
     ])
   })
 
@@ -23,8 +23,8 @@ describe('seenServers', () => {
     seen.add('2.2.2.2', NaN)
 
     expect(seen.entries()).toEqual([
-      {ip: '1.1.1.1', queryPort: 4711},
-      {ip: '2.2.2.2', queryPort: 4711},
+      {ip: '1.1.1.1', queryPort: 4711, verified: false},
+      {ip: '2.2.2.2', queryPort: 4711, verified: false},
     ])
   })
 
@@ -37,7 +37,7 @@ describe('seenServers', () => {
 
     expect(seen.has('1.1.1.1', 4711)).toBe(false)
     expect(seen.has('2.2.2.2', 4711)).toBe(true)
-    expect(seen.entries()).toEqual([{ip: '2.2.2.2', queryPort: 4711}])
+    expect(seen.entries()).toEqual([{ip: '2.2.2.2', queryPort: 4711, verified: false}])
   })
 
   test('defaults a missing or zero query port to 4711 on remove', () => {
@@ -53,5 +53,56 @@ describe('seenServers', () => {
     const seen = createSeenServers([{ip: '9.9.9.9', queryPort: 4711}])
     expect(seen.has('9.9.9.9', 4711)).toBe(true)
     expect(seen.has('9.9.9.9', 5000)).toBe(false)
+    expect(seen.isVerified('9.9.9.9', 4711)).toBe(false)
+  })
+
+  test('seeds trusted initial pairs as verified', () => {
+    const seen = createSeenServers([{ip: '9.9.9.9', queryPort: 4711, verified: true}])
+    expect(seen.isVerified('9.9.9.9', 4711)).toBe(true)
+  })
+
+  test('marks a server as verified once it has answered a query', () => {
+    const seen = createSeenServers()
+    seen.add('1.1.1.1', 4711)
+    expect(seen.isVerified('1.1.1.1', 4711)).toBe(false)
+
+    seen.markVerified('1.1.1.1', 4711)
+    expect(seen.isVerified('1.1.1.1', 4711)).toBe(true)
+  })
+
+  test('re-adding a verified server (heartbeat) keeps it verified', () => {
+    const seen = createSeenServers()
+    seen.add('1.1.1.1', 4711)
+    seen.markVerified('1.1.1.1', 4711)
+
+    seen.add('1.1.1.1', 4711)
+
+    expect(seen.isVerified('1.1.1.1', 4711)).toBe(true)
+  })
+
+  test('verification is lost when the server is removed', () => {
+    const seen = createSeenServers()
+    seen.add('1.1.1.1', 4711)
+    seen.markVerified('1.1.1.1', 4711)
+
+    seen.remove('1.1.1.1', 4711)
+    seen.add('1.1.1.1', 4711)
+
+    expect(seen.isVerified('1.1.1.1', 4711)).toBe(false)
+  })
+
+  test('defaults a missing or zero query port to 4711 for verification', () => {
+    const seen = createSeenServers()
+    seen.add('1.1.1.1', 0)
+
+    seen.markVerified('1.1.1.1', 0)
+
+    expect(seen.isVerified('1.1.1.1', 4711)).toBe(true)
+    expect(seen.isVerified('1.1.1.1', 0)).toBe(true)
+  })
+
+  test('isVerified is false for unknown servers', () => {
+    const seen = createSeenServers()
+    expect(seen.isVerified('1.1.1.1', 4711)).toBe(false)
   })
 })

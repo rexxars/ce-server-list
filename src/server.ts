@@ -17,8 +17,9 @@ const checking = new Set<string>()
 const serverList: Server[] = []
 const serverFailures: Record<string, number> = {}
 const seenServers = createSeenServers([
-  // https://codenameeaglemultiplayer.com/ known server
-  {ip: '89.38.98.12', queryPort: 4711},
+  // https://codenameeaglemultiplayer.com/ known server. Seeded as verified so
+  // it is probed forever even through long outages - it may never heartbeat us.
+  {ip: '89.38.98.12', queryPort: 4711, verified: true},
 ])
 
 let refreshTimer = setTimeout(() => null, 25)
@@ -79,16 +80,42 @@ async function pingServer(
   log.info('[%s] Querying server for status', client)
   try {
     const previousCountryCode = findServer(serverList, ip, portNumber)?.countryCode
+    const previousFailures = serverFailures[client] || 0
     const server = await queryServer(ip, portNumber, previousCountryCode)
+    if (previousFailures > 5) {
+      log.info(
+        '[%s] Server came back online after %d failed queries, restoring to list',
+        client,
+        previousFailures,
+      )
+    }
     log.info('[%s] Server is online', client)
     upsertServer(serverList, server)
+    // A verified server (one that has answered a query at least once) stays in
+    // the re-ping rotation through outages, so it is restored here when it
+    // comes back rather than depending on it heartbeating us again.
+    seenServers.markVerified(ip, portNumber)
     // markDirty only schedules a Sanity write if the stored state actually
     // changed; the "updating status" log happens at commit time (see below).
     sync?.markDirty(server)
     serverFailures[client] = 0
   } catch (err) {
-    log.warn('[%s] Failed to query server: %s', client, errorMessage(err))
     serverFailures[client] = (serverFailures[client] || 0) + 1
+    const failures = serverFailures[client]
+
+    // Past the drop threshold the server has already been removed from the
+    // list but is still probed every refresh - demote the recurring failure
+    // log to debug so a long outage does not warn every 15 seconds.
+    if (failures > 6) {
+      log.debug(
+        '[%s] Failed to query server (%d consecutive failures): %s',
+        client,
+        failures,
+        errorMessage(err),
+      )
+    } else {
+      log.warn('[%s] Failed to query server: %s', client, errorMessage(err))
+    }
 
     // A server that announces but fails its very first query has never been
     // reachable on its query port - typically a firewall / port-forwarding
@@ -101,23 +128,28 @@ async function pingServer(
       )
     }
 
-    const failures = serverFailures[client]
     if (failures > 5) {
       const existing = findServer(serverList, ip, portNumber)
-      removeServer(serverList, ip, portNumber)
-      // Prune from the re-ping rotation too, so an unreachable announcer is not
-      // queried forever. If it later becomes reachable it will announce again
-      // and be re-added with a fresh failure budget.
-      seenServers.remove(ip, portNumber)
-      delete serverFailures[client]
       if (existing) {
+        // Hide the server from the public list (and the Sanity backup) while
+        // it is down, but keep it in the re-ping rotation - it is re-added the
+        // moment it answers a query again.
+        removeServer(serverList, ip, portNumber)
+        sync?.markRemoved(existing._key)
         log.warn(
-          '[%s] Server unresponsive after %d failed queries, dropping from list',
+          '[%s] Server unresponsive after %d failed queries, removing from list until it responds again',
           client,
           failures,
         )
-        sync?.markRemoved(existing._key)
-      } else {
+      }
+
+      if (!seenServers.isVerified(ip, portNumber)) {
+        // Never answered a single query - typically a spoofed heartbeat or a
+        // firewalled/misconfigured host. Prune from the re-ping rotation so it
+        // is not probed forever; if it later becomes reachable it will
+        // announce again and be re-added with a fresh failure budget.
+        seenServers.remove(ip, portNumber)
+        delete serverFailures[client]
         log.info(
           '[%s] Server unreachable after %d failed queries, dropping from re-ping rotation',
           client,
@@ -185,7 +217,10 @@ async function seedFromBackup() {
   const remoteKeys = new Set(remoteServers.map((remoteServer) => remoteServer._key))
   for (const remoteServer of remoteServers) {
     const seededServer = withSeedPingTime(remoteServer)
-    seenServers.add(seededServer.ip, seededServer.queryPort)
+    // Backup servers were online at some point, so seed them as verified: if
+    // one is down while we boot it should stay in the re-ping rotation rather
+    // than be pruned as a never-reachable announcer.
+    seenServers.add(seededServer.ip, seededServer.queryPort, {verified: true})
     upsertServer(serverList, seededServer)
   }
 
