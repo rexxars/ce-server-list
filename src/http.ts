@@ -25,12 +25,7 @@ const MIME_TYPES: Record<string, string> = {
 
 // Allow-list of static assets we are willing to serve, guarding against path
 // traversal: only these exact filenames map to a file on disk.
-const STATIC_FILES = new Set([
-  'styles.css',
-  'servers.js',
-  'favicon.ico',
-  'ce-master-patch.exe',
-])
+const STATIC_FILES = new Set(['styles.css', 'servers.js', 'favicon.ico', 'ce-master-patch.exe'])
 
 // Cache-Control policies. Dynamic responses get a short TTL so updates surface
 // quickly; the favicon effectively never changes so it can be cached for a year;
@@ -38,6 +33,10 @@ const STATIC_FILES = new Set([
 const SHORT_TTL = 'public, max-age=5'
 const IMMUTABLE_TTL = 'public, max-age=31536000, immutable'
 const REVALIDATE = 'no-cache'
+
+// Maximum number of characters shown for a server name (kept in sync with
+// `static/servers.js`).
+const MAX_NAME_LENGTH = 25
 
 export interface HttpServerOptions {
   /** Returns the current in-memory list of online servers. */
@@ -63,7 +62,8 @@ export function createHttpServer(options: HttpServerOptions): http.Server {
   // into its template on each request; `/help` is served verbatim.
   const htmlCache = new Map<string, Promise<string>>()
   const loadHtml = (name: string) =>
-    htmlCache.get(name) ?? htmlCache.set(name, readFile(path.join(STATIC_DIR, name), 'utf8')).get(name)!
+    htmlCache.get(name) ??
+    htmlCache.set(name, readFile(path.join(STATIC_DIR, name), 'utf8')).get(name)!
 
   // Static assets are read, fingerprinted and cached once on first request.
   const staticCache = new Map<string, Promise<StaticAsset>>()
@@ -175,7 +175,7 @@ function renderRow(server: Server): string {
   return [
     '<tr>',
     `<td class="name"><img class="flag" src="${flagSrc(server.countryCode)}" alt="" />` +
-      `<a href="cneagle://${escapeHtml(address)}" rel="noreferrer noopener">${escapeHtml(server.name)}</a></td>`,
+      `<a href="cneagle://${escapeHtml(address)}" rel="noreferrer noopener">${escapeHtml(truncate(server.name, MAX_NAME_LENGTH))}</a></td>`,
     `<td class="ip">${escapeHtml(address)}</td>`,
     `<td>${server.numPlayers} / ${server.maxPlayers}</td>`,
     `<td class="map">${escapeHtml(server.map)}</td>`,
@@ -202,6 +202,12 @@ function renderIpList(servers: Server[]): string {
   }
 
   return ['# List of online Codename Eagle servers', ...ips, ''].join('\n')
+}
+
+// Cap displayed server names so the Name column stays a sensible width. The
+// client-side renderer in `static/servers.js` applies the same limit.
+function truncate(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value
 }
 
 function escapeHtml(value: string): string {

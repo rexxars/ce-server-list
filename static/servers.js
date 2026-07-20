@@ -13,6 +13,10 @@
     encodeURIComponent('*[_id=="serverList"]') +
     '&includeResult=true&includePreviousRevision=false&includeMutations=false'
 
+  // Maximum number of characters shown for a server name (kept in sync with the
+  // `MAX_NAME_LENGTH` constant in `src/http.ts`).
+  const MAX_NAME_LENGTH = 25
+
   const tbody = document.querySelector('tbody')
 
   const source = new EventSource(listenUrl)
@@ -40,7 +44,7 @@
     if (sorted.length === 0) {
       const tr = document.createElement('tr')
       const td = cell('No servers online.', 'empty')
-      td.setAttribute('colspan', '7')
+      td.setAttribute('colspan', '6')
       tr.appendChild(td)
       tbody.appendChild(tr)
       return
@@ -52,11 +56,11 @@
   function renderServer(server) {
     const {ip, serverPort, version, name, map, maxPlayers, numPlayers, gameType, countryCode} =
       server
+    const address = `${ip}:${serverPort}`
 
     const tr = document.createElement('tr')
-    tr.appendChild(flag(countryCode))
-    tr.appendChild(cell(name))
-    tr.appendChild(cell(gameLink(`${ip}:${serverPort}`)))
+    tr.appendChild(nameCell(countryCode, address, name))
+    tr.appendChild(cell(address, 'ip'))
     tr.appendChild(cell(`${numPlayers} / ${maxPlayers}`))
     tr.appendChild(cell(map, 'map'))
     tr.appendChild(cell(gameType === 'ctf' ? 'CTF' : gameType, 'mode'))
@@ -65,21 +69,37 @@
     tbody.appendChild(tr)
   }
 
+  // Name cell holds the country flag and the (truncated) server name, which
+  // doubles as the game-join link. Mirrors `renderRow` in `src/http.ts`.
+  function nameCell(countryCode, address, name) {
+    const td = document.createElement('td')
+    td.setAttribute('class', 'name')
+    td.appendChild(flag(countryCode))
+    td.appendChild(gameLink(address, truncate(name, MAX_NAME_LENGTH)))
+    return td
+  }
+
   function flag(countryCode) {
     const src = /^[a-z]{2}$/i.test(countryCode || '')
       ? `https://flagcdn.com/${countryCode.toLowerCase()}.svg`
       : empty
     const img = document.createElement('img')
+    img.setAttribute('class', 'flag')
     img.setAttribute('src', src)
-    return cell(img, 'flag')
+    img.setAttribute('alt', '')
+    return img
   }
 
-  function gameLink(address) {
+  function gameLink(address, text) {
     const a = document.createElement('a')
     a.setAttribute('href', `cneagle://${address}`)
     a.setAttribute('rel', 'noreferrer noopener')
-    a.appendChild(document.createTextNode(address))
+    a.appendChild(document.createTextNode(text))
     return a
+  }
+
+  function truncate(value, max) {
+    return value.length > max ? `${value.slice(0, max - 1)}…` : value
   }
 
   function cell(content, className) {

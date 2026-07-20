@@ -63,7 +63,6 @@ main {
 
 table {
   width: 100%;
-  table-layout: fixed;
 }
 
 table,
@@ -73,10 +72,15 @@ td {
   text-align: left;
 }
 
+/*
+ * Auto table layout sizes each column to its content, so nothing wraps as long
+ * as the row fits. Server names are capped at 25 characters at render time (see
+ * the `truncate` helpers), which keeps the Name column from growing unbounded.
+ */
 th,
 td {
   padding: 0.3rem;
-  overflow-wrap: break-word;
+  white-space: nowrap;
 }
 
 .empty {
@@ -84,32 +88,7 @@ td {
   padding: 2rem;
 }
 
-th.players {
-  width: 80px;
-}
-
-th.ip {
-  width: 140px;
-}
-
-th.map,
-th.mode {
-  width: 100px;
-}
-
-th.version {
-  width: 80px;
-}
-
-td.name {
-  white-space: nowrap;
-}
-
 td.name a {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: inline-block;
-  max-width: calc(100% - 22px);
   vertical-align: middle;
 }
 
