@@ -63,6 +63,7 @@ main {
 
 table {
   width: 100%;
+  table-layout: fixed;
 }
 
 table,
@@ -75,6 +76,7 @@ td {
 th,
 td {
   padding: 0.3rem;
+  overflow-wrap: break-word;
 }
 
 .empty {
@@ -82,24 +84,51 @@ td {
   padding: 2rem;
 }
 
-.flag {
-  min-width: 32px;
+th.players {
+  width: 80px;
 }
 
-img {
-  width: 32px;
+th.ip {
+  width: 140px;
+}
+
+th.map,
+th.mode {
+  width: 100px;
+}
+
+th.version {
+  width: 80px;
+}
+
+td.name {
+  white-space: nowrap;
+}
+
+td.name a {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+  max-width: calc(100% - 22px);
+  vertical-align: middle;
+}
+
+img.flag {
+  width: 16px;
+  margin-right: 0.4rem;
+  vertical-align: middle;
 }
 
 code {
   background: #eee;
 }
 
-@media only screen and (max-width: 400px) {
+@media only screen and (max-width: 600px) {
   #content {
     padding: 10px;
   }
 
-  .flag,
+  .ip,
   .map,
   .mode,
   .version {

@@ -165,7 +165,7 @@ async function handleRequest(
 function renderIndex(template: string, servers: Server[]): string {
   const rows = servers.length
     ? servers.map(renderRow).join('\n')
-    : '<tr><td colspan="7" class="empty">No servers online.</td></tr>'
+    : '<tr><td colspan="6" class="empty">No servers online.</td></tr>'
   return template.replace('<!--SERVER_ROWS-->', rows)
 }
 
@@ -174,9 +174,9 @@ function renderRow(server: Server): string {
   const mode = server.gameType === 'ctf' ? 'CTF' : server.gameType
   return [
     '<tr>',
-    `<td class="flag"><img src="${flagSrc(server.countryCode)}" /></td>`,
-    `<td>${escapeHtml(server.name)}</td>`,
-    `<td><a href="cneagle://${escapeHtml(address)}" rel="noreferrer noopener">${escapeHtml(address)}</a></td>`,
+    `<td class="name"><img class="flag" src="${flagSrc(server.countryCode)}" alt="" />` +
+      `<a href="cneagle://${escapeHtml(address)}" rel="noreferrer noopener">${escapeHtml(server.name)}</a></td>`,
+    `<td class="ip">${escapeHtml(address)}</td>`,
     `<td>${server.numPlayers} / ${server.maxPlayers}</td>`,
     `<td class="map">${escapeHtml(server.map)}</td>`,
     `<td class="mode">${escapeHtml(mode)}</td>`,
